@@ -1,0 +1,3 @@
+[submodule "py-dtbindings"]
+	path = py-dtbindings
+	url = https://github.com/ValentinGrim/py-dtbindings
