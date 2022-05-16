@@ -12,6 +12,8 @@ There is some work in progress and quick-and-dirty stuff going on here but, it ~
   This fork uses submodules 
 
     git clone --recurse-submodules https://github.com/ValentinGrim/lopper
+    sudo apt install swig python3 python3-ruamel.yaml
+    pip3 install -r ./py-dtbindings/requirement.txt
 
 # Workflow:
 Calling :
