@@ -3,3 +3,7 @@ __pycache__*
 dist/*
 build/*
 lopper.egg-info/
+download/
+*.log
+*dtb
+*.pp

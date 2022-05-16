@@ -1360,6 +1360,19 @@ class LopperNode(object):
         """
         return self.__props__.items()
 
+    def keys( self ):
+        """method to support keys()
+
+        While return the keys() from __props__ tu support that type of access.
+
+        Args:
+                None
+
+        Returns:
+            odcit_keys object from self
+        """
+        return self.__props__.keys()
+
     def __iter__(self):
         """magic method to support iteration
 

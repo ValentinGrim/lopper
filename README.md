@@ -1,3 +1,60 @@
+________________________________________________________________________________
+# Introduction:
+This fork of lopper intends to generate C struct and data from a devicetree.
+The goal is to generate these for baremetal components (e.g. TF-M, some RToS or internal).
+
+The assist dt_to_c.py used in alongside [py-dtbindings](https://github.com/ValentinGrim/py-dtbindings)
+and baremetal/board_header.py will try to do that.
+
+There is some work in progress and quick-and-dirty stuff going on here but, it ~work.
+
+## git:
+  This fork uses submodules 
+
+    git clone --recurse-submodules https://github.com/ValentinGrim/lopper
+
+# Workflow:
+Calling :
+
+    ./lopper.py -f --werror -i ./lopper/lops/lop-dt-to-c.dts my_input_devicetree.dts
+
+Will result the following
+- After lopper done his job, dt_to_c assist will be called
+  - Init a mySDTBindings which is the main class of [py-dtbindings](https://github.com/ValentinGrim/py-dtbindings) (used to access dt-bindings and dt-schemas info)
+
+  - Init a myBoardHeader which is the main class of baremetal/board_header.py (used to write the final files)
+
+  - Init a "clean node list" which will contain all "okay" nodes from the devicetree.
+
+  - A loop will call struct_generator and platdata_generator on all nodes from the clean node list in order to generate C struct definition and declarations for each node.
+
+- Generation:
+  - struct_generator will use [py-dtbindings](https://github.com/ValentinGrim/py-dtbindings)
+  to extract the required list from dt-bindings (actually cloned from [kernel.org](https://www.kernel.org/doc/Documentation/devicetree/bindings/))
+
+  - With this required list, it will also have type information that [py-dtbindings](https://github.com/ValentinGrim/py-dtbindings)
+  will extract from [dt-schema](https://github.com/devicetree-org/dt-schema)
+
+  - Having all this information will allow struct_generator to generate a C struct
+  definition.
+
+  - platdata_generator will then generate a C struct declaration named _nodename_address_ using devicetree values.
+
+  - [WIP] Properties that contain phandle will be processed as a pointer and we will
+  try to generate struct and platdata for these calling the same struct_generator and
+  platdata_generator
+
+- Ending:
+  - All the generated data has been given to the myBoardHeader class which will
+  write down all of these in a combo board_header.c / .h located in build dir
+  (path can be changed as it is an arg of the class constructor)
+
+  - Warning ! Some values and struct won't be that clean and may not compile.
+  Especially if there is phandle in them.
+
+# Suggestion / Remarks / Comments ?
+Feel free to contact me @ vmonnot@outlook.com
+________________________________________________________________________________
 # Overview:
 
 Fundamentally, lopper takes an input device tree (normally a system device tree),
@@ -144,4 +201,3 @@ handle the split directories and include files.
 ## Limitations:
 
  - Internal interfaces are subject to change
-
