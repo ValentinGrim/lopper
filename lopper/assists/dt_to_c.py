@@ -211,11 +211,8 @@ def platdata_generator(node):
     """
     nodeStruct = myBoardHeader[node.name.split('@')[0]]
     if nodeStruct:
-        # If there is a label node, we sould prefer using it for naming
-        if 'label' in node.__props__.keys():
-            name = node['label'].value[0].replace('-','_').upper()
-        else:
-            name = node.name.replace('@','_').replace('-','_').upper()
+
+        name = node.name.replace('@','_').replace('-','_').upper()
 
         struct_name = node.name.split('@')[0].upper() + "_S"
         myBoardHeader.add2extern("extern const %s %s;\n" % (struct_name,name))
@@ -262,20 +259,45 @@ def platdata_generator(node):
                 if '**' in type_t:
                     prop_t = myProp['maxItems']
                     if prop_t:
+                        # In case bindings explicitly say that maxItems = 1
+                        # We are facing 1D array
                         if prop_t.value == 1:
                             type_t = type_t.replace('**','*')
                             myBoardHeader.update_type(node.name.split('@')[0],
                                                       key, type_t)
-                            # Simple tab
-                            _generate_simple_tab(type_t, key ,name, myNodeProp)
+                            # Simple array
+                            _generate_simple_array(type_t, key ,name, myNodeProp)
                             const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
+
+                        # We might be facing 2D array we must check using #*-cells property
                         else:
-                            # TODO: #*-cells finder
-                            # We should have a const type myVar[x][y] = {...}
-                            # And x, y are unknown
-                            # for interrupts we shall find #interrupts-cells
-                            # for reg we shall find #address-cells and #size-cells
-                            const_t["values"].update({key : "NULL"})
+                            if key == "reg":
+                                tmp_node = node
+                                while not "#address-cells" in tmp_node.keys():
+                                    if not tmp_node.parent:
+                                        print("[ERR ]: No #address-cells found for %s" % node.name)
+                                        print("[ERR ]: No more parent node left to find it.")
+                                        print("[ERR ]: Is your tree well formed ?")
+                                        sys.exit(-1)
+                                    tmp_node = tmp_node.parent
+
+                                size = (tmp_node["#address-cells"].value[0] +
+                                        tmp_node["#size-cells"].value[0])
+
+                                type_t = type_t.replace("**","*")
+                                myBoardHeader.update_type(node.name.split('@')[0], key, type_t)
+
+                                if len(node[key].value) == size:
+                                    _generate_simple_array(type_t, key, name, myNodeProp)
+                                else:
+                                    _generate_simple_array(type_t, key, name, myNodeProp, size)
+                                const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
+                            else:
+                                # I Actually didn't saw any node like that
+                                # We may face an interrupts here
+                                print("[NIY ]: Property %s for node %s not processed" %
+                                      (key, node.name))
+                                const_t["values"].update({key : "NULL"})
                     else:
                         # TODO:
                         const_t["values"].update({key : "NULL"})
@@ -283,9 +305,13 @@ def platdata_generator(node):
                         #print(myNodeProp)
                         #raise NotImplementedError
                 else:
-                    # Simple tab
-                    _generate_simple_tab(type_t, key ,name, myNodeProp)
-                    const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
+                    # Simple array
+                    if len(myNodeProp.value) == 1:
+                        myBoardHeader.update_type(node.name.split('@')[0], key, type_t.replace('*',''))
+                        const_t['values'].update({key : myNodeProp.value[0]})
+                    else:
+                        _generate_simple_array(type_t, key ,name, myNodeProp)
+                        const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
 
             elif isinstance(type_t,dict):
                 # Multiple type for the given node
@@ -306,24 +332,40 @@ def platdata_generator(node):
         myBoardHeader.add2const(const_t, name)
 
 
-def _generate_simple_tab(type_t, key ,name, myNodeProp):
+def _generate_simple_array(type_t, key ,name, myNodeProp, size = 0):
     """
-    Genetate C tab for platdata_generator()
+    Genetate C array for platdata_generator()
 
         Parameters:
-            type_t  (str): The type of the future tab
+            type_t  (str): The type of the future array
             key     (str): The name of the property
-            name    (str): The name of the struct you generate a tab for
+            name    (str): The name of the struct you generate a array for
             myNodeProp (lopper.tree.LopperProp): The properties from devicetree
-                                                 to fill in the tab
+                                                 to fill in the araay
+            size    (int): Size from size-cells + address-cells if needed
+                           This is used in case we have 2D array
 
     """
     generated = "const %s" % type_t.replace('*','')
-    generated += "%s_%s[%i] = {" % (key.upper(),name,len(myNodeProp.value))
-    for val in myNodeProp.value:
-        generated += str(hex(val)) + " , "
-    generated = generated[:-3]
-    myBoardHeader.add2generated(generated + '};\n')
+    if size == 0:
+        generated += "%s_%s[%i] = {" % (key.upper(),name,len(myNodeProp.value))
+        for val in myNodeProp.value:
+            generated += str(hex(val)) + " , "
+        # End the line and remove the laste " , "
+        generated = generated[:-3] + "};\n"
+
+    else:
+        generated += ("%s_%s[%i][%i] = {{" %
+                      (key.upper(),name,len(myNodeProp.value)/size,size))
+        for x, val in enumerate(myNodeProp.value):
+            if x % size == 0 and x != 0:
+                generated = generated[:-3]
+                generated += "},{"
+            generated += str(hex(val)) + " , "
+        # End the line and remove the laste " , "
+        generated = generated[:-3] + "}};\n"
+
+    myBoardHeader.add2generated(generated)
 
 def _generate_sub_struct(myNodeProp, node):
     """

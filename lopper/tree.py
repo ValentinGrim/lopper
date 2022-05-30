@@ -1363,7 +1363,7 @@ class LopperNode(object):
     def keys( self ):
         """method to support keys()
 
-        While return the keys() from __props__ tu support that type of access.
+        Will return the keys() from __props__ tu support that type of access.
 
         Args:
                 None
