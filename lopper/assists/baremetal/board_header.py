@@ -121,8 +121,17 @@ class BoardHeader:
             Parameters:
                 name    (str): The name of the struct
                 key     (str): The element of the struct
-                type_t  (str): The new type for the element
+                type_t  (any): The new type for the element
         """
+        if isinstance(type_t, dict):
+            for k,v in self._struct[name].items():
+                if isinstance(v, dict):
+                    if any(keys in v.keys() for keys in type_t.keys()):
+                        #if len(type_t) == 1:
+                        #    return
+                        #else:
+                        tmp = set(v.keys())
+                        del type_t[list(tmp.intersection(type_t.keys()))[0]]
         self._struct[name][key] = type_t
 
     def close(self):

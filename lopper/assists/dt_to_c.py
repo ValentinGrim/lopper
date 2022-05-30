@@ -211,21 +211,21 @@ def platdata_generator(node):
     """
     nodeStruct = myBoardHeader[node.name.split('@')[0]]
     if nodeStruct:
-
         name = node.name.replace('@','_').replace('-','_').upper()
 
         struct_name = node.name.split('@')[0].upper() + "_S"
         myBoardHeader.add2extern("extern const %s %s;\n" % (struct_name,name))
         const_t = {'type' : struct_name, 'values' : dict()}
 
-        for key, type_t in nodeStruct.items():
+        nodeStructDict = nodeStruct.copy()
+        for key, type_t in nodeStructDict.items():
             if any(pattern in key for pattern in ("-names","-controller")):
                 continue
 
             myBinding = mySDTBindings.get_binding(node['compatible'].value[0])
             if not myBinding:
                 # FIXME: py-dtbindings do not handle patternProperties
-                const_t['values'].update({key : "NULL"})
+                const_t = None
                 continue
 
             myProp = myBinding.get_prop_by_name(key)
@@ -258,9 +258,9 @@ def platdata_generator(node):
             elif '*' in type_t:
                 if '**' in type_t:
                     prop_t = myProp['maxItems']
-                    if prop_t:
-                        # In case bindings explicitly say that maxItems = 1
-                        # We are facing 1D array
+                    if prop_t and prop_t.value == 1:
+                    # In case bindings explicitly say that maxItems = 1
+                    # We are facing 1D array
                         if prop_t.value == 1:
                             type_t = type_t.replace('**','*')
                             myBoardHeader.update_type(node.name.split('@')[0],
@@ -269,41 +269,54 @@ def platdata_generator(node):
                             _generate_simple_array(type_t, key ,name, myNodeProp)
                             const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
 
-                        # We might be facing 2D array we must check using #*-cells property
-                        else:
-                            if key == "reg":
-                                tmp_node = node
-                                while not "#address-cells" in tmp_node.keys():
-                                    if not tmp_node.parent:
-                                        print("[ERR ]: No #address-cells found for %s" % node.name)
-                                        print("[ERR ]: No more parent node left to find it.")
-                                        print("[ERR ]: Is your tree well formed ?")
-                                        sys.exit(-1)
-                                    tmp_node = tmp_node.parent
-
-                                size = (tmp_node["#address-cells"].value[0] +
-                                        tmp_node["#size-cells"].value[0])
-
-                                type_t = type_t.replace("**","*")
-                                myBoardHeader.update_type(node.name.split('@')[0], key, type_t)
-
-                                if len(node[key].value) == size:
-                                    _generate_simple_array(type_t, key, name, myNodeProp)
-                                else:
-                                    _generate_simple_array(type_t, key, name, myNodeProp, size)
-                                const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
-                            else:
-                                # I Actually didn't saw any node like that
-                                # We may face an interrupts here
-                                print("[NIY ]: Property %s for node %s not processed" %
-                                      (key, node.name))
-                                const_t["values"].update({key : "NULL"})
+                    # We might be facing 2D array we must check using #*-cells property
                     else:
-                        # TODO:
-                        const_t["values"].update({key : "NULL"})
-                        #print(myProp)
-                        #print(myNodeProp)
-                        #raise NotImplementedError
+                        toFind = str()
+                        if key == "reg":
+                            toFind = "#address-cells"
+                        elif key == "interrupts":
+                            if myNodeProp.name == "interrupts-extended":
+                                # Generate sub struct for phandle in interrupts
+                                ret = _generate_sub_struct(myNodeProp, node)
+                                if ret:
+                                    const_t['values'].update(ret)
+                                continue
+                            # Else
+                            toFind = "interrupt-parent"
+                        else:
+                            # I Actually didn't saw any node falling here
+                            # Maybe there is something to implemente here
+                            print("[NIY ]: Property %s for node %s not processed" %
+                                  (key, node.name))
+                            const_t["values"].update({key : "NULL"})
+                            continue
+
+                        tmp_node = node
+                        while not toFind in tmp_node.keys():
+                            if not tmp_node.parent:
+                                print("[ERR ]: No %s found for %s." % (toFind,node.name))
+                                print("[ERR ]: No more parent node left to find it.")
+                                print("[ERR ]: Is your tree complete ?")
+                                sys.exit(-1)
+                            tmp_node = tmp_node.parent
+
+                        size = int()
+                        if key == "reg":
+                            size = (tmp_node["#address-cells"].value[0] +
+                                    tmp_node["#size-cells"].value[0])
+                        elif key == "interrupt":
+                            interrupt_parent = node.tree.pnode(tmp_node["interrupt-parent"].value[0])
+                            size = interrupt_parent["#interrupt-cells"].value[0]
+
+                        type_t = type_t.replace("**","*")
+                        myBoardHeader.update_type(node.name.split('@')[0], key, type_t)
+
+                        if len(node[key].value) == size:
+                            _generate_simple_array(type_t, key, name, myNodeProp)
+                        else:
+                            _generate_simple_array(type_t, key, name, myNodeProp, size)
+                        const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
+
                 else:
                     # Simple array
                     if len(myNodeProp.value) == 1:
@@ -329,7 +342,8 @@ def platdata_generator(node):
             else:
                 # TODO
                 pass
-        myBoardHeader.add2const(const_t, name)
+        if const_t:
+            myBoardHeader.add2const(const_t, name)
 
 
 def _generate_simple_array(type_t, key ,name, myNodeProp, size = 0):
@@ -364,6 +378,10 @@ def _generate_simple_array(type_t, key ,name, myNodeProp, size = 0):
             generated += str(hex(val)) + " , "
         # End the line and remove the laste " , "
         generated = generated[:-3] + "}};\n"
+        # Update type
+        struct_name = name.lower().rsplit("_",1)[0].replace("_","-")
+        myBoardHeader[struct_name][key] = { key + ("[%i]" % size) : type_t}
+
 
     myBoardHeader.add2generated(generated)
 
@@ -386,6 +404,8 @@ def _generate_sub_struct(myNodeProp, node):
     name_t = str()
     if myNodeProp.name[-1] == "s":
         name_t = "#" + myNodeProp.name[:-1] + "-cells"
+    elif myNodeProp.name == "interrupts-extended":
+        name_t = "#interrupt-cells"
 
     items_t = list()
     i = 0
@@ -429,6 +449,9 @@ def _generate_sub_struct(myNodeProp, node):
 
         if myNodeProp.name[-1] == "s":
             name_t = myNodeProp.name[:-1] + "-names"
+        elif myNodeProp.name == "interrupts-extended":
+            name_t = "interrupt-names"
+
         if name_t in node.keys():
             name_t = node[name_t].value
 
@@ -457,15 +480,17 @@ def _generate_sub_struct(myNodeProp, node):
                 pass
                 #print(items_t[0])
         else:
+            node_name = myNodeProp.name.replace("-","_")
+            if myNodeProp.name == "interrupts-extended":
+                node_name = "interrupts"
             if not len(name_t) == len(items_t):
                 # We should have name if multiple items
                 name_t = list()
                 for i in range(len(items_t)):
-                    name_t.append(myNodeProp.name + "_%i" %i)
+                    name_t.append(node_name + "_%i" %i)
 
             for id, item in enumerate(items_t):
-                name = (myNodeProp.name.replace("-","_") +
-                        "_" + name_t[id].replace("-","_"))
+                name = (node_name + "_" + name_t[id].replace("-","_"))
                 if isinstance(item,int):
                     # Only phandle no value attached
                     # TODO: generate struct for phandle
@@ -505,7 +530,10 @@ def _generate_sub_struct(myNodeProp, node):
                         const_t.update({name : hex(item[1])})
                         type_t.update({ name : "uint32_t"})
 
-        myBoardHeader.update_type(node.name.split('@')[0], myNodeProp.name, type_t)
+        if myNodeProp.name == "interrupts-extended":
+            myBoardHeader.update_type(node.name.split('@')[0], "interrupts", type_t)
+        else:
+            myBoardHeader.update_type(node.name.split('@')[0], myNodeProp.name, type_t)
         if const_t: return const_t
     else: return None
 
