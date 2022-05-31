@@ -396,6 +396,12 @@ def _generate_sub_struct(myNodeProp, node):
 
         Returns:
             const_t (dict): A dict which contains the generated struct
+
+        Known issues:
+            In case there is 2 phandle in a property and those 2 phandle
+            are different but has the same type of struct (or not) the
+            second struct is ignored. Some mod needs to be done in this
+            function and also in board_header.py I think.
     """
     # void * means phandle, so first arg should be a phandle
     phandle_node = node.tree.pnode(myNodeProp.value[0])
@@ -447,95 +453,78 @@ def _generate_sub_struct(myNodeProp, node):
         pnode_name = node.tree.pnode(myNodeProp.value[0]).name.split("@")[0].replace("-","_")
         type_t     = { pnode_name : "void *"}
 
+        # node_name will be used to name generated struct elements
+        node_name = myNodeProp.name.replace("-","_")
+
+        # Check if names exist in the devicetree
         if myNodeProp.name[-1] == "s":
+            # If there is a "s" at the end of the node name we have to remove it
             name_t = myNodeProp.name[:-1] + "-names"
         elif myNodeProp.name == "interrupts-extended":
+            # interrupts-extended and interrupts have the same name node
             name_t = "interrupt-names"
+            node_name = "interrupts"
 
+        # Check in the devicetree if a *****-names prop exist
         if name_t in node.keys():
             name_t = node[name_t].value
 
-        if len(items_t) == 1:
-            if len(items_t[0]) == 2:
-                # TODO: generate struct for phandle
-                # BoardHeader.update_type :
-                #     { myNodeProp.name : "structType *" , myNodeProp.name + "_id" : "uint32_t" }
-                # BoardHeader.add2struct :
-                #     A dict with the generated struct
-                # BoardHeader.add2typedef :
-                #     typedef for the above struct
-                # + Generate plat data
-                pass
-                #print(items_t[0])
-            else:
+
+
+        if not len(name_t) == len(items_t):
+            # We should have name if multiple items
+            name_t = list()
+            for i in range(len(items_t)):
+                name_t.append(node_name + "_%i" %i)
+
+        for id, item in enumerate(items_t):
+            name = (node_name + "_" + name_t[id].replace("-","_"))
+            if isinstance(item,int):
                 # Only phandle no value attached
-                # TODO: generate struct for phandle
-                # BoardHeader.update_type :
-                # "structType *"
-                # BoardHeader.add2struct :
-                #     A dict with the generated struct
-                # BoardHeader.add2typedef :
-                #     typedef for the above struct
-                # + Generate plat data
-                pass
-                #print(items_t[0])
-        else:
-            node_name = myNodeProp.name.replace("-","_")
-            if myNodeProp.name == "interrupts-extended":
-                node_name = "interrupts"
-            if not len(name_t) == len(items_t):
-                # We should have name if multiple items
-                name_t = list()
-                for i in range(len(items_t)):
-                    name_t.append(node_name + "_%i" %i)
+                # struct generation
+                pnode = node.tree.pnode(item)
+                struct_name = struct_generator(pnode,[pnode])
+                type_t.update({pnode.name.split("@")[0].replace("-","_") : struct_name})
+                platdata_generator(pnode)
 
-            for id, item in enumerate(items_t):
-                name = (node_name + "_" + name_t[id].replace("-","_"))
-                if isinstance(item,int):
-                    # Only phandle no value attached
-                    # TODO: generate struct for phandle
-                    # BoardHeader.update_type :
-                    # "structType *"
-                    # BoardHeader.add2struct :
-                    #   A dict with the generated struct
-                    # BoardHeader.add2typedef :
-                    #   typedef for the above struct
-                    # + Generate plat data
-                    pass
-                    #print(id, item)
+            else:
+                # phandle + value(s)
+                # struct generation
+                pnode = node.tree.pnode(item[0])
+                struct_name = struct_generator(pnode,[pnode])
+                type_t.update({pnode.name.split("@")[0].replace("-","_") : struct_name})
+                platdata_generator(pnode)
+
+                if len(item) > 2:
+                    # Generating an array because there is at list 2 values
+                    # attached to the phandle
+                    name_gen = (node.name.upper().replace("-","_").replace("@","_") +
+                                "_" + node_name.upper() + "_" +
+                                name_t[id].upper().replace("-","_"))
+
+                    generated = "const uint32_t %s[%i] = {" %(name_gen,len(item)-1)
+
+                    for value in item[1:]:
+                        generated += "%s , " % hex(value)
+                    generated = generated[:-3] + "};\n"
+                    myBoardHeader.add2generated(generated)
+
+                    const_t.update({ name : name_gen})
+                    type_t.update({ name : "uint32_t *"})
+
                 else:
-                    # phandle + value(s)
-                    if len(item) > 2:
-                        # Struct
-                        pnode = node.tree.pnode(item[0])
-                        struct_name = struct_generator(pnode,[pnode])
-                        type_t.update({pnode.name.split("@")[0].replace("-","_") : struct_name})
-                        platdata_generator(pnode)
-
-                        # Generated
-                        name_gen = (node.name.upper().replace("-","_").replace("@","_") +
-                                    "_" + myNodeProp.name.upper().replace("-","_") +
-                                    "_" + name_t[id].upper().replace("-","_"))
-                        generated = "const uint32_t %s[%i] = {" %(name_gen,len(item)-1)
-
-                        for value in item[1:]:
-                            generated += "%s , " % hex(value)
-                        generated = generated[:-3] + "};\n"
-                        myBoardHeader.add2generated(generated)
-
-                        type_t.update({ name : "uint32_t *"})
-                        const_t.update({ name : name_gen})
-
-                    else:
-                        const_t.update({name : hex(item[1])})
-                        type_t.update({ name : "uint32_t"})
+                    # Only one value attached to the phandle, no need to generate
+                    # an array for it. A simple uint32 will work.
+                    const_t.update({name : hex(item[1])})
+                    type_t.update({ name : "uint32_t"})
 
         if myNodeProp.name == "interrupts-extended":
             myBoardHeader.update_type(node.name.split('@')[0], "interrupts", type_t)
         else:
             myBoardHeader.update_type(node.name.split('@')[0], myNodeProp.name, type_t)
         if const_t: return const_t
-    else: return None
+    else:
+        return None
 
 
 #   Used to check size for node that have different type possible.
