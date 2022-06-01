@@ -19,6 +19,9 @@ sys.path.append(os.path.dirname(__file__).rsplit("/", 2)[0] + "/py-dtbindings")
 from bindings         import SDTBindings, Prop
 from board_header     import BoardHeader
 
+# A tuple of pattern we can find in node property name that we don't want in C struct.
+non_processed_prop = ('#', '$', 'compatible', '-names', '-controller', '-parent')
+
 def is_compat(node, compat_id):
     if re.search("baremetal_config,generate", compat_id):
         return baremetal_config_generator
@@ -49,7 +52,7 @@ def baremetal_config_generator(tgt_node, sdt, options):
     root_node = sdt.tree[tgt_node]
 
     # Remove all disable nodes from the list
-    clean_node_list = get_node_list(root_node.subnodes())
+    clean_node_list = get_active_node_list(root_node.subnodes())
 
     global mySDTBindings
     mySDTBindings = SDTBindings(verbose = verbose)
@@ -59,28 +62,12 @@ def baremetal_config_generator(tgt_node, sdt, options):
 
     for node in clean_node_list:
         struct_generator(node, clean_node_list)
+        # new_struct_generator(node, clean_node_list)
         platdata_generator(node)
     myBoardHeader.close()
 
     return True
 
-def get_node_list(root_sub_nodes):
-    """
-    For each node check status and return a node list countaining all okay node
-
-        Parameters:
-            root_sub_nodes (list): A node list should be extracted from root node
-
-        Returns:
-            node_list (list): A only okay node list
-    """
-    node_list = []
-    for node in root_sub_nodes:
-        #Check if node is enable or not so that we know if we process it
-        status = check_status(node)
-        if status == "okay" or status == "ok":
-            node_list.append(node)
-    return node_list
 
 def check_status(node):
     """
@@ -102,45 +89,92 @@ def check_status(node):
         status = "disabled"
     return status
 
-def check_required(node, myBinding):
+def get_active_node_list(root_sub_nodes):
     """
-    For all required given by the binding, check if these are present in the given node
+    For each node check status and return a node list countaining all okay node
+    that have max depth of 2 (max depth level is soc subnodes)
 
         Parameters:
-            node (lopper.tree.LopperNode): The node to check
-            myBinding  (bindings.Binding): The binding for the given node
+            root_sub_nodes (list): A node list should be extracted from root node
 
-        Remarks:
-            This fct is broke in certains cases so not called anymore
-            (Because of patternProperties and pattern $nodename NYI)
+        Returns:
+            node_list (list): A only okay node list
     """
-    for prop in myBinding.required():
-        try:
-            prop_t = myBinding.get_prop_by_name(prop)
-            name = prop
+    node_list = list()
+    for node in root_sub_nodes:
+        #Check if node is enable or not so that we know if we process it
+        status = check_status(node)
+        if (status == "okay" or status == "ok") and node.depth <= 2:
+            node_list.append(node)
+    return node_list
 
-            if type(prop_t.value) == list:
-                for prop2 in prop_t.value:
-                    if isinstance(prop2,Prop):
-                        if prop2.name == "pattern":
-                            name = re.compile(prop2.value)
+def new_struct_generator(node, node_list, return_struct = False):
+    struct_name = node.type[0].replace(',','_').replace('-','_')
 
-            flag = False
-            if type(name) == str:
-                node[name]
-                flag = True
+    myBinding = mySDTBindings.get_binding(node.type[0])
+    if myBinding:
+        # TODO: We should check required nodes to ensure that tree is well written
 
+        typedef_t = "typedef struct %s_s %s_S;\n" % (struct_name,
+                                                     struct_name.upper())
+        struct_t = dict()
+        property_t = dict()
+
+        properties = myBinding.required()
+        for i in range(2):
+            for property in properties:
+                if not any(x in property for x in non_processed_prop):
+                    myProp = myBinding.get_prop_by_name(property)
+
+                    if not myProp:
+                        # FIXME: py-dtbindings do not handle patternProperties
+                        continue
+
+                    prop_struct = _struct_generator(myProp,node.name.split('@')[0],
+                                                   node_list)
+                    if not prop_struct: continue
+
+                    if i == 1:
+                        # In case we are fetching optional, we will redo the
+                        # dict so that we can include a presence flag.
+                        # There is only one entry in this dict.
+                        # We extract the only key so that
+                        # the next instruction wont be too long
+                        print(prop_struct.keys())
+                        key_t = list(prop_struct.keys())[0]
+                        prop_struct[key_t] = { "type"       : prop_struct[key_t],
+                                               "presence"   : False}
+                        print(prop_struct)
+                    property_t.update(dict(prop_struct))
+            print(property_t)
+
+            if i == 0:
+                struct_t.update({"required" : property_t})
+                properties = myBinding.optional()
+                property_t = dict()
             else:
-                for item in node:
-                    if name.match(item.name):
-                        flag = True
+                struct_t.update({"optional" : property_t})
+        print(struct_t)
 
-        except KeyError:
-            pass
 
-        if not flag:
-            print("[ERR ]: Missing required '%s' in node %s" % (prop, node.name))
-            sys.exit(-1)
+def _struct_generator(myProp, node_name, node_list):
+    struct_t = dict()
+    # List means multiple var for this property
+    if type(myProp.type) == list:
+        struct_tt = dict()
+        for item in myProp.type:
+            struct_tt.update({item[1] : item[0]})
+        struct_t.update({myProp.name : struct_tt})
+
+    # Tuple means that there is different type possible
+    elif type(myProp.type) == tuple:
+        type_t = check_type(node_name,node_list,myProp)
+        struct_t.update({myProp.name : type_t})
+
+    # Means type is str but for now we don't process some specific nodes
+    elif not myProp.type in ("unknown","none","name","object"):
+        struct_t.update({myProp.name : myProp.type})
+    return struct_t
 
 def struct_generator(node, node_list):
     """
@@ -219,6 +253,7 @@ def platdata_generator(node):
 
         nodeStructDict = nodeStruct.copy()
         for key, type_t in nodeStructDict.items():
+
             if any(pattern in key for pattern in ("-names","-controller")):
                 continue
 
@@ -251,6 +286,7 @@ def platdata_generator(node):
             if type_t == 'void *':
                 # Void * means a phandle or a sub object
                 # To process that case, we should generate a new struct
+
                 ret = _generate_sub_struct(myNodeProp, node)
                 if ret:
                     const_t['values'].update(ret)
@@ -272,6 +308,7 @@ def platdata_generator(node):
                     # We might be facing 2D array we must check using #*-cells property
                     else:
                         toFind = str()
+
                         if key == "reg":
                             toFind = "#address-cells"
                         elif key == "interrupts":
@@ -304,7 +341,7 @@ def platdata_generator(node):
                         if key == "reg":
                             size = (tmp_node["#address-cells"].value[0] +
                                     tmp_node["#size-cells"].value[0])
-                        elif key == "interrupt":
+                        elif key == "interrupts":
                             interrupt_parent = node.tree.pnode(tmp_node["interrupt-parent"].value[0])
                             size = interrupt_parent["#interrupt-cells"].value[0]
 
@@ -328,6 +365,7 @@ def platdata_generator(node):
 
             elif isinstance(type_t,dict):
                 # Multiple type for the given node
+                # Or struct may already have been modified
                 i = 0
                 for k, v in type_t.items():
                     #print(k,v)
@@ -340,7 +378,6 @@ def platdata_generator(node):
                     i += 1
 
             else:
-                # TODO
                 pass
         if const_t:
             myBoardHeader.add2const(const_t, name)

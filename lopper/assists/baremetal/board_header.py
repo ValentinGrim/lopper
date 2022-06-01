@@ -70,7 +70,7 @@ class BoardHeader:
 
     def __getitem__(self, name):
         """
-        Magic method that return an item from #_struct if exist
+        Magic method that return an item from self._struct_untouched if exist
         """
         if name in self._struct.keys():
             return self._struct[name]
@@ -127,10 +127,10 @@ class BoardHeader:
             for k,v in self._struct[name].items():
                 if isinstance(v, dict):
                     if any(keys in v.keys() for keys in type_t.keys()):
-                        #if len(type_t) == 1:
-                        #    return
-                        #else:
-                        tmp = set(v.keys())
+                        if len(type_t) == 1:
+                            return
+                        else:
+                            tmp = set(v.keys())
                         del type_t[list(tmp.intersection(type_t.keys()))[0]]
         self._struct[name][key] = type_t
 
