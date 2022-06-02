@@ -52,6 +52,7 @@ def baremetal_config_generator(tgt_node, sdt, options):
     root_node = sdt.tree[tgt_node]
 
     # Remove all disable nodes from the list
+    global clean_node_list
     clean_node_list = get_active_node_list(root_node.subnodes())
 
     global mySDTBindings
@@ -61,8 +62,8 @@ def baremetal_config_generator(tgt_node, sdt, options):
     myBoardHeader = BoardHeader(path)
 
     for node in clean_node_list:
-        struct_generator(node, clean_node_list)
-        # new_struct_generator(node, clean_node_list, True)
+        struct_generator(node)
+        # new_struct_generator(node, True)
         platdata_generator(node)
     myBoardHeader.close()
 
@@ -113,7 +114,8 @@ def get_active_node_list(root_sub_nodes):
             node_list.append(node)
     return node_list
 
-def new_struct_generator(node, node_list, return_struct = False):
+
+def new_struct_generator(node, return_struct = False):
     """
                                 [WIP]
     Replacement for struct_generator() including optional properties
@@ -139,8 +141,7 @@ def new_struct_generator(node, node_list, return_struct = False):
                         # FIXME: py-dtbindings do not handle patternProperties
                         continue
 
-                    prop_struct = _struct_generator(myProp,node.name.split('@')[0],
-                                                   node_list)
+                    prop_struct = _struct_generator(myProp,node.name.split('@')[0])
                     if not prop_struct: continue
 
                     if i == 1:
@@ -168,8 +169,7 @@ def new_struct_generator(node, node_list, return_struct = False):
         return struct_name + '_S *'
     return None
 
-
-def _struct_generator(myProp, node_name, node_list):
+def _struct_generator(myProp, node_name):
     """
     Will be called by struct_generator to generate a dict that contains
     all necessary informations for a given node.
@@ -179,7 +179,6 @@ def _struct_generator(myProp, node_name, node_list):
             myProp (bindings.MainProp): The binding informations for the given node
                                         Extracted from py-dtbindings
             node_name    (str): The of the node (should be the str before the @)
-            node_list   (list): The list of "clean" nodes used in the process
 
         Returns:
             A dict with poperty name as key and type as value or None
@@ -193,7 +192,7 @@ def _struct_generator(myProp, node_name, node_list):
 
     # Tuple means that there is different type possible
     elif type(myProp.type) == tuple:
-        type_t = check_type(node_name,node_list,myProp)
+        type_t = check_type(node,node_name,myProp)
         return {myProp.name : type_t}
 
     # Means type is str but for now we don't process some specific nodes
@@ -201,13 +200,16 @@ def _struct_generator(myProp, node_name, node_list):
         return {myProp.name : myProp.type}
     return None
 
-def struct_generator(node, node_list):
+
+def new_platdata_generator(node):
+    pass
+
+def struct_generator(node):
     """
     Used to generate struct for given nodes
 
         Parameters:
             node (lopper.tree.LopperNode): The node you want to generate struct for
-            node_list (list): The list which contain all node to process
 
         Return:
             (str): The name of the generated struct
@@ -250,7 +252,7 @@ def struct_generator(node, node_list):
 
                     # Tuple means that there is different type possible
                     elif type(myProp.type) == tuple:
-                        type_t = check_type(node_name,node_list,myProp)
+                        type_t = check_type(node,node_name,myProp)
                         struct_t.update({myProp.name : type_t})
 
                     # Means type is str but for now we don't process some
@@ -278,7 +280,8 @@ def platdata_generator(node):
 
         nodeStructDict = nodeStruct.copy()
         for key, type_t in nodeStructDict.items():
-
+            if not type_t:
+                print(nodeStruct)
             if any(pattern in key for pattern in ("-names","-controller")):
                 continue
 
@@ -545,7 +548,7 @@ def _generate_sub_struct(myNodeProp, node):
                 # Only phandle no value attached
                 # struct generation
                 pnode = node.tree.pnode(item)
-                struct_name = struct_generator(pnode,[pnode])
+                struct_name = struct_generator(pnode)
                 type_t.update({pnode.name.split("@")[0].replace("-","_") : struct_name})
                 platdata_generator(pnode)
 
@@ -553,7 +556,7 @@ def _generate_sub_struct(myNodeProp, node):
                 # phandle + value(s)
                 # struct generation
                 pnode = node.tree.pnode(item[0])
-                struct_name = struct_generator(pnode,[pnode])
+                struct_name = struct_generator(pnode)
                 type_t.update({pnode.name.split("@")[0].replace("-","_") : struct_name})
                 platdata_generator(pnode)
 
@@ -599,7 +602,7 @@ type_size = {   'bool'  : 1                 ,
                 '32'    : 0xFFFFFFFF        ,
                 '64'    : 0xFFFFFFFFFFFFFFFF}
 
-def check_type(node_name,node_list,node_prop):
+def check_type(node, node_name,node_prop):
     """
     If there is different type possible from a Prop, will check every instance
     of this prop to determine which type use.
@@ -609,8 +612,8 @@ def check_type(node_name,node_list,node_prop):
     Also, it admit that types are sorted by their size.
 
         Parameters:
-            node_name   (str): The node name we want to determine type
-            node_list  (list): The node list to work with
+            node           : The node 
+            node_name (str): The node name we want to determine type
             node_prop (bindings.MainProp): The node poperties that contains types list
 
         Returns:
@@ -618,51 +621,54 @@ def check_type(node_name,node_list,node_prop):
     """
     list_t = []
     # First, make a list of every node that use the same struct (and has the same name)
-    for node in node_list:
-        if node_name in node.name:
-            list_t.append(node)
+    for node_t in clean_node_list:
+        if node_name in node_t.name:
+            list_t.append(node_t)
+
+    if not list_t:
+        list_t.append(node)
     # Normally their should always be at least one item but, we never know
-    if list_t:
-        # If we fall here, then list should look like (void*,object)
-        # So we don't have to test, only return void*
-        if "void" in node_prop.type:
-            return "void *"
 
-        if re.findall(r'\d+',node_prop.type[0]):
-            a = re.findall(r'\d+',node_prop.type[0])[0]
-        else:
-            # Normally it's bool, if it's char* or char** then...
-            # Then I never saw that case !
-            # If it happen, script will crash because of KeyError
-            # And so we might figure out how to process the given node
-            a = node_prop.type[0]
+    # If we fall here, then list should look like (void*,object)
+    # So we don't have to test, only return void*
+    if "void" in node_prop.type:
+        return "void *"
 
-        if re.findall(r'\d+',node_prop.type[1]):
-            b = re.findall(r'\d+',node_prop.type[1])[0]
-        else:
-            # Same
-            b = node_prop.type[1]
-        size_t = [type_size[a],type_size[b]]
-        for node in list_t:
-            try:
-                item = node[node_prop.name]
-            except KeyError:
-                # TODO
-                item = None
+    if re.findall(r'\d+',node_prop.type[0]):
+        a = re.findall(r'\d+',node_prop.type[0])[0]
+    else:
+        # Normally it's bool, if it's char* or char** then...
+        # Then I never saw that case !
+        # If it happen, script will crash because of KeyError
+        # And so we might figure out how to process the given node
+        a = node_prop.type[0]
 
-            if item:
-                for value in item.value:
-                    # If int  value goes from -0x80* to 0x7F*
-                    if "uint" in node_prop.type:
-                        if value >= size_t[0]:
+    if re.findall(r'\d+',node_prop.type[1]):
+        b = re.findall(r'\d+',node_prop.type[1])[0]
+    else:
+        # Same
+        b = node_prop.type[1]
+    size_t = [type_size[a],type_size[b]]
+    for node_t in list_t:
+        try:
+            item = node_t[node_prop.name]
+        except KeyError:
+            # TODO
+            item = None
+
+        if item:
+            for value in item.value:
+                # If int  value goes from -0x80* to 0x7F*
+                if "uint" in node_prop.type:
+                    if value >= size_t[0]:
+                        return node_prop.type[1]
+                # Else, it goes 0x0 to 0xF*
+                else:
+                    if value >= 0:
+                        if value >= size_t[0]/2:
                             return node_prop.type[1]
-                    # Else, it goes 0x0 to 0xF*
                     else:
-                        if value >= 0:
-                            if value >= size_t[0]/2:
-                                return node_prop.type[1]
-                        else:
-                            if value <= -size_t[0]/2:
-                                return node_prop.type[1]
-        # No return in for loop means value fit in first
-        return node_prop.type[0]
+                        if value <= -size_t[0]/2:
+                            return node_prop.type[1]
+    # No return in for loop means value fit in first
+    return node_prop.type[0]
