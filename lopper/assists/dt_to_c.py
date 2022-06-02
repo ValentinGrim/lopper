@@ -62,7 +62,7 @@ def baremetal_config_generator(tgt_node, sdt, options):
 
     for node in clean_node_list:
         struct_generator(node, clean_node_list)
-        # new_struct_generator(node, clean_node_list)
+        # new_struct_generator(node, clean_node_list, True)
         platdata_generator(node)
     myBoardHeader.close()
 
@@ -99,6 +99,11 @@ def get_active_node_list(root_sub_nodes):
 
         Returns:
             node_list (list): A only okay node list
+
+        Remarks:
+            Node over 2 of depth can still be accessed using .subnodes() method
+            We will do it like that because these subnodes should be processed
+            another way.
     """
     node_list = list()
     for node in root_sub_nodes:
@@ -109,6 +114,10 @@ def get_active_node_list(root_sub_nodes):
     return node_list
 
 def new_struct_generator(node, node_list, return_struct = False):
+    """
+                                [WIP]
+    Replacement for struct_generator() including optional properties
+    """
     struct_name = node.type[0].replace(',','_').replace('-','_')
 
     myBinding = mySDTBindings.get_binding(node.type[0])
@@ -140,13 +149,10 @@ def new_struct_generator(node, node_list, return_struct = False):
                         # There is only one entry in this dict.
                         # We extract the only key so that
                         # the next instruction wont be too long
-                        print(prop_struct.keys())
                         key_t = list(prop_struct.keys())[0]
                         prop_struct[key_t] = { "type"       : prop_struct[key_t],
                                                "presence"   : False}
-                        print(prop_struct)
                     property_t.update(dict(prop_struct))
-            print(property_t)
 
             if i == 0:
                 struct_t.update({"required" : property_t})
@@ -154,27 +160,46 @@ def new_struct_generator(node, node_list, return_struct = False):
                 property_t = dict()
             else:
                 struct_t.update({"optional" : property_t})
-        print(struct_t)
+
+        if return_struct: return struct_t
+        # Else
+        myBoardHeader.add2struct({node.name.split('@')[0] : struct_t})
+        myBoardHeader.add2typedef(typedef_t)
+        return struct_name + '_S *'
+    return None
 
 
 def _struct_generator(myProp, node_name, node_list):
-    struct_t = dict()
+    """
+    Will be called by struct_generator to generate a dict that contains
+    all necessary informations for a given node.
+    These informations are extracted from dt-bindings
+
+        Parameters:
+            myProp (bindings.MainProp): The binding informations for the given node
+                                        Extracted from py-dtbindings
+            node_name    (str): The of the node (should be the str before the @)
+            node_list   (list): The list of "clean" nodes used in the process
+
+        Returns:
+            A dict with poperty name as key and type as value or None
+    """
     # List means multiple var for this property
     if type(myProp.type) == list:
-        struct_tt = dict()
+        struct_t = dict()
         for item in myProp.type:
             struct_tt.update({item[1] : item[0]})
-        struct_t.update({myProp.name : struct_tt})
+        return {myProp.name : struct_t}
 
     # Tuple means that there is different type possible
     elif type(myProp.type) == tuple:
         type_t = check_type(node_name,node_list,myProp)
-        struct_t.update({myProp.name : type_t})
+        return {myProp.name : type_t}
 
     # Means type is str but for now we don't process some specific nodes
     elif not myProp.type in ("unknown","none","name","object"):
-        struct_t.update({myProp.name : myProp.type})
-    return struct_t
+        return {myProp.name : myProp.type}
+    return None
 
 def struct_generator(node, node_list):
     """
