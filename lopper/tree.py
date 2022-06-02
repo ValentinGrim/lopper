@@ -77,6 +77,8 @@ class LopperProp():
         self.ptype = ""
         self.binary = False
 
+        self.phandle_resolution = True
+
         self.abs_path = ""
 
         if value == None:
@@ -849,12 +851,17 @@ class LopperProp():
 
         self.pclass = prop_type
 
-        phandle_idx, phandle_field_count = self.phandle_params()
-        phandle_tgts = self.resolve_phandles( True )
+        if self.phandle_resolution:
+            phandle_idx, phandle_field_count = self.phandle_params()
+            phandle_tgts = self.resolve_phandles( True )
 
-        if phandle_field_count and len(prop_val) % phandle_field_count != 0:
-            # if the property values and the expected field counts do not match
-            # zero phandles out to avoid processing below.
+            if phandle_field_count and len(prop_val) % phandle_field_count != 0:
+                # if the property values and the expected field counts do not match
+                # zero phandles out to avoid processing below.
+                phandle_idx = 0
+                phandle_field_count = 0
+                phandle_tgts = []
+        else:
             phandle_idx = 0
             phandle_field_count = 0
             phandle_tgts = []
@@ -952,6 +959,15 @@ class LopperProp():
                                     phandle_tgt_name = "invalid_phandle"
                             else:
                                 # strict and an invalid phandle, jump to the next record
+
+                                # were we the last record ? That means we could have an incorrectly
+                                # continued list with ","
+                                if rnum == len(records_to_iterate) - 1:
+                                    try:
+                                        formatted_records[-1] = ";"
+                                    except:
+                                        pass
+
                                 continue
                         else:
                             phandle_tgt_name = phandle_resolution.label
@@ -1168,6 +1184,11 @@ class LopperNode(object):
         new_instance.indent_char = self.indent_char
 
         new_instance._source = self._source
+
+        # this may cause duplicate phandles, be careful when assiging to
+        # a tree ... but doing this means that there's a chance copied
+        # phandle references will continue to work.
+        new_instance.phandle = self.phandle
 
         new_instance.tree = None
 
@@ -1564,7 +1585,7 @@ class LopperNode(object):
         else:
             self._ref = 0
 
-    def resolve_all_refs( self, property_mask=[] ):
+    def resolve_all_refs( self, property_mask=[], parents=True ):
         """Resolve and Return all references in a node
 
         Finds all the references starting from a given node. This includes:
@@ -1576,6 +1597,8 @@ class LopperNode(object):
         Args:
            property_mask (list of regex): Any properties to exclude from reference
                                           tracking, "*" to exclude all properties
+           parents (bool): flag indicating if parent nodes should be returned as
+                           references. Default is True.
 
         Returns:
            A list of referenced nodes, or [] if no references are found
@@ -1591,12 +1614,13 @@ class LopperNode(object):
         # always add ourself!
         reference_list.append( self )
 
-        # and our parents, but we don't chase all of their links, just their
-        # node numbers
-        node_parent = self.parent
-        while node_parent != None:
-            reference_list.append( node_parent )
-            node_parent = node_parent.parent
+        if parents:
+            # and our parents, but we don't chase all of their links, just their
+            # node numbers
+            node_parent = self.parent
+            while node_parent != None:
+                reference_list.append( node_parent )
+                node_parent = node_parent.parent
 
         props_to_consider = []
         for p in self:
@@ -1612,7 +1636,7 @@ class LopperNode(object):
                 for ph_node in phandle_nodes:
                     # don't call in for our own node, or we'll recurse forever
                     if ph_node.abs_path != self.abs_path:
-                        refs = ph_node.resolve_all_refs( property_mask_check )
+                        refs = ph_node.resolve_all_refs( property_mask_check, parents )
                         if refs:
                             reference_list.append( refs )
 
@@ -1656,6 +1680,24 @@ class LopperNode(object):
             all_kids = all_kids + child_node.subnodes( depth + 1, max_depth  )
 
         return all_kids
+
+    def is_child( self, potential_child_node ):
+        """test if a node is a child
+
+        Returns true if the passed node is a child of this node,
+        false otherwise.
+
+        Args:
+            potential_child_node (LopperNode) : node to test as descendant
+
+        Returns:
+             bool: returns True if the node is a chile, false otherwise
+        """
+        possible_children = self.subnodes()
+        if potential_child_node in possible_children:
+            return True
+
+        return False
 
     def print( self, output=None, strict=None ):
         """print a node
@@ -1921,25 +1963,34 @@ class LopperNode(object):
            Nothing. KeyError if property is not found
 
         """
-        if self.__dbg__ > 1:
-            print( "[DBG+]: deleting property %s from node %s" % (prop, self))
+        if isinstance( prop, LopperProp ) or type(prop) == str:
+            if self.__dbg__ > 1:
+                print( "[DBG+]: deleting property %s from node %s" % (prop, self))
 
-        prop_to_delete = prop
-        if type(prop) == str:
+            prop_to_delete = prop
+            if type(prop) == str:
+                try:
+                    prop_to_delete = self.__props__[prop]
+                except Exception as e:
+                    raise e
+
+            if not isinstance( prop_to_delete, LopperProp ):
+                print( "[WARNING]: invalid property passed to delete: %s" % prop )
+
+            self.__modified__ = True
             try:
-                prop_to_delete = self.__props__[prop]
+                prop_to_delete.__pstate__ = "deleted"
+                self.__props_pending_delete__[prop_to_delete.name] = prop_to_delete
+                del self.__props__[prop_to_delete.name]
             except Exception as e:
                 raise e
-        if not isinstance( prop_to_delete, LopperProp ):
-            print( "[WARNING]: invalid property passed to delete: %s" % prop )
-
-        self.__modified__ = True
-        try:
-            prop_to_delete.__pstate__ = "deleted"
-            self.__props_pending_delete__[prop_to_delete.name] = prop_to_delete
-            del self.__props__[prop_to_delete.name]
-        except Exception as e:
-            raise e
+        elif isinstance( prop, LopperNode):
+            try:
+                del self.child_nodes[prop.abs_path]
+                self.__modified__ = True
+            except:
+                if self.__dbg__ > 2:
+                    print( "[WARNING]: node %s not found, and could not be deleted" % prop.abs_path )
 
     def props( self, name ):
         """Access a property or list of properties described by a name/regex
@@ -2047,7 +2098,7 @@ class LopperNode(object):
            LopperNode: returns self
 
         """
-        if not isinstance( other, LopperProp ):
+        if not isinstance( other, LopperProp ) and not isinstance( other, LopperNode ):
             return self
 
         self.delete( other )
@@ -2111,6 +2162,10 @@ class LopperNode(object):
             node.tree = self.tree
 
             self.child_nodes[node.abs_path] = node
+
+            # this gets the node fully into the tree's tracking dictionaries
+            if self.tree:
+                self.tree.add( node )
 
             if self.__dbg__ > 2:
                 print( "[DBG++]: node %s added Node: %s" % (self.abs_path,node.name) )
@@ -2403,6 +2458,14 @@ class LopperNode(object):
 
         ## We also may use this as recursive subnode resolve() call, so we
         ## can apply changes to a nodes properties and all subnode properties
+
+        if self.abs_path == "/":
+            self.depth = 0
+        else:
+            self.depth = len(re.findall( '/', self.abs_path ))
+
+        if self.__dbg__ > 2:
+            print( "[DBG++]: node resolve: calculating depth %s for: %s" % (self.abs_path, self.depth))
 
         self.__nstate__ = "resolved"
         self.__modified__ = False
@@ -2882,6 +2945,17 @@ class LopperTree:
 
 
     def export(self, start_path = "/" ):
+        """Export a tree to a dictionary
+
+        This routine takes a LopperTree, and exports the nodes and properties
+        to a dictionary.
+
+        Args:
+            start_path (String,optional): the starting path for export
+
+        Returns:
+             dictionary
+        """
         if self.__dbg__ > 2:
             print( "[DBG] tree export start: %s" % start_path )
 
@@ -2901,7 +2975,12 @@ class LopperTree:
         for i,n in enumerate(subnodes):
             # node_dct = self.export(n)
             # dct[node_dct['__path__']] = node_dct
-            dct[n.abs_path] = self.export(n.abs_path)
+            nd = self.export(n.abs_path)
+            if nd:
+                dct[n.abs_path] = nd
+            else:
+                if self.__dbg__ > 2:
+                    print( "[WARNING]: node with no annotations: %s" % n.abs_path )
 
         return dct
 
@@ -2928,8 +3007,20 @@ class LopperTree:
         self["/"].print( output )
 
     def resolve( self ):
+        """resolve a tree
+
+        Iterates all the nodes in a tree, and then the properties, making
+        sure that everyting is fully resolved.
+
+        Args:
+           None
+
+        Returns:
+           Nothing
+        """
         # walk each node, and individually resolve
         for n in self:
+            n.resolve()
             for p in n:
                 p.resolve()
 
@@ -3116,6 +3207,7 @@ class LopperTree:
 
         if self.__dbg__ > 2:
             print( "[DBG+++]: tree: node add: [%s] %s (%s)(%s)" % (node.name,[ node ],node.abs_path,node.number) )
+            print( "          phandle: %s" % (node.phandle) )
 
         node_full_path = node.abs_path
 
@@ -3173,11 +3265,12 @@ class LopperTree:
         #       count on the current behaviour to not drop the properties.
         node.load( { '__path__' : node.abs_path,
                      '__fdt_name__' : node.name,
-                     '__fdt_phandle__' : 0 },
+                     '__fdt_phandle__' : node.phandle },
                    parent_path )
 
         if self.__dbg__ > 2:
             print( "[DBG++]: node add: %s, after load. depth is :%s" % (node.abs_path,node.depth ))
+            print( "         phandle: %s" % (node.phandle) )
 
         self.__nodes__[node.abs_path] = node
 
