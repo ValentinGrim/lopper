@@ -20,7 +20,7 @@ from bindings         import SDTBindings, Prop
 from board_header     import BoardHeader
 
 # A tuple of pattern we can find in node property name that we don't want in C struct.
-non_processed_prop = ('#', '$', 'compatible', '-names', '-controller', '-parent')
+non_processed_prop = ('#', '$', 'compatible', '-names', '-controller', '-parent', 'ranges')
 
 def is_compat(node, compat_id):
     if re.search("baremetal_config,generate", compat_id):
@@ -63,8 +63,9 @@ def baremetal_config_generator(tgt_node, sdt, options):
 
     for node in clean_node_list:
         struct_generator(node)
-        # new_struct_generator(node, True)
+        # new_struct_generator(node)
         platdata_generator(node)
+        # new_platdata_generator(node)
     myBoardHeader.close()
 
     return True
@@ -141,7 +142,7 @@ def new_struct_generator(node, return_struct = False):
                         # FIXME: py-dtbindings do not handle patternProperties
                         continue
 
-                    prop_struct = _struct_generator(myProp,node.name.split('@')[0])
+                    prop_struct = _struct_generator(node, myProp,node.name.split('@')[0])
                     if not prop_struct: continue
 
                     if i == 1:
@@ -164,12 +165,12 @@ def new_struct_generator(node, return_struct = False):
 
         if return_struct: return struct_t
         # Else
-        myBoardHeader.add2struct({node.name.split('@')[0] : struct_t})
+        myBoardHeader.add2struct({struct_name : struct_t})
         myBoardHeader.add2typedef(typedef_t)
         return struct_name + '_S *'
     return None
 
-def _struct_generator(myProp, node_name):
+def _struct_generator(node, myProp, node_name):
     """
     Will be called by struct_generator to generate a dict that contains
     all necessary informations for a given node.
@@ -201,8 +202,147 @@ def _struct_generator(myProp, node_name):
     return None
 
 
-def new_platdata_generator(node):
-    pass
+def new_platdata_generator(myNode):
+    """
+                                [WIP]
+    Replacement for platdata_generator() including optional properties
+    """
+    for node in myNode.subnodes():
+        struct_name = node.type[0].replace(',','_').replace('-','_')
+        nodeStruct = myBoardHeader[struct_name]
+
+        if not nodeStruct:
+            # Normally, the first node of the subnodes list is the main node
+            # If myBoardHeader return None instead of a struct, that means
+            # no struct had been generated for it in  struct_generator so exit
+            if node == myNode:
+                return
+
+            else:
+                # TODO
+                # We should generate a struct for these nodes but, there's often
+                # No compatible in object node so struct_generator won't work
+                # on these nodes currently
+                # py-dtbindings need to be updated to support patternProperties
+                # That's generally where object info are
+                continue
+        else:
+            # We should compare the struct returned by myBoardHeader with the
+            # original struct to ensure that struct has not already been modified
+            # If it has been modified, that's mean another node use the same struct
+            # Because it had the same compatible.
+            # So we should process using the original struct and compare both
+            # struct at the end of the process.
+            # This way, if two node with the same compatible have not the same
+            # optional, we will make two different struct for each.
+            original = new_struct_generator(node, True)
+            if nodeStruct != original:
+                nodeStruct = orignal
+
+        properties = "required"
+        for i in range(2):
+            if i == 1:
+                properties = "optional"
+
+            for key, type_t in nodeStruct[properties].items():
+
+                name = node.name.replace('@','_').replace('-','_').upper()
+                extern_t = "extern const %s %s;\n" % (struct_name,name)
+
+                if i == 1:
+                    type_t = type_t['type']
+
+                generated = _new_platdata_generator(node, key, type_t)
+
+                if not generated:
+                    continue
+                print(generated)
+
+
+def _new_platdata_generator(node, key, type_t):
+
+    myBinding = mySDTBindings.get_binding(node.type[0])
+    if not myBinding:
+        return None
+
+    myProp = myBinding.get_prop_by_name(key)
+
+    try:
+        myNodeProp = node[key]
+    except KeyError:
+        # Item name might follow a pattern
+        key_t = ''
+        for item in node:
+            prop_t = myBinding.get_prop_by_name(item.name)
+            if prop_t:
+                if prop_t.name == myProp.name:
+                    key_t = item.name
+                    break
+        if not key_t:
+            # FIXME:
+            if key == "interrupts":
+                key_t = "interrupts-extended"
+            else:
+                return None
+        myNodeProp = node[key_t]
+
+    # Now that we have our basis, we have to generate plat data depeding on type
+    if type_t == 'void *':
+        # phandle or object, generate struct
+        generated = _phandle_processor()
+        if generated:
+            return {key : generated}
+        return None
+
+    elif '*' in type_t:
+        # Array or matrix
+        if len(myNodeProp.value) == 1:
+            return {key : hex(myNodeProp.value[0])}
+        else:
+            # We msut search if there is any properties that define the number of
+            # cells.
+            if key == "reg":
+                toFind = "#address-cells"
+            elif key == "interrupts":
+                toFind = "interrupt-parent"
+            else:
+                toFind = None
+                print(key)
+
+            size = 0
+            if toFind:
+                # Now we will search in the node and parent node the property
+                # we have to find.
+                tmp_node = node
+                while not toFind in tmp_node.keys():
+                    if not tmp_node.parent:
+                        print("[ERR ]: No %s found for %s." % (toFind,node.name))
+                        print("[ERR ]: No more parent node left to find it.")
+                        print("[ERR ]: Is your tree complete ?")
+                        sys.exit(-1)
+                    tmp_node = tmp_node.parent
+
+                # And with that we can update the size of each elements of the
+                # property in order to generate an array or a matrix for it.
+                if key == "reg":
+                    size = (tmp_node["#address-cells"].value[0] +
+                            tmp_node["#size-cells"].value[0])
+
+                elif key == "interrupts":
+                    interrupt_parent = node.tree.pnode(tmp_node["interrupt-parent"].value[0])
+                    size = interrupt_parent["#interrupt-cells"].value[0]
+
+            return _array_generator()
+
+    if myProp.type == 'bool':
+        return {key : 1}
+    return {key : hex(myNodeProp.value[0])}
+
+def _phandle_processor():
+    return None
+
+def _array_generator():
+    return None
 
 def struct_generator(node):
     """
@@ -426,7 +566,7 @@ def _generate_simple_array(type_t, key ,name, myNodeProp, size = 0):
 
     """
     generated = "const %s" % type_t.replace('*','')
-    if size == 0:
+    if size == 0 or size >= len(myNodeProp.value):
         generated += "%s_%s[%i] = {" % (key.upper(),name,len(myNodeProp.value))
         for val in myNodeProp.value:
             generated += str(hex(val)) + " , "
@@ -612,7 +752,7 @@ def check_type(node, node_name,node_prop):
     Also, it admit that types are sorted by their size.
 
         Parameters:
-            node           : The node 
+            node           : The node
             node_name (str): The node name we want to determine type
             node_prop (bindings.MainProp): The node poperties that contains types list
 

@@ -70,10 +70,10 @@ class BoardHeader:
 
     def __getitem__(self, name):
         """
-        Magic method that return an item from self._struct_untouched if exist
+        Magic method that return an item from self._struct if exist
         """
         if name in self._struct.keys():
-            return self._struct[name]
+            return self._struct[name].copy()
         return None
 
     def add2struct(self, struct):
