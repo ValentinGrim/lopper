@@ -345,7 +345,6 @@ def _new_platdata_generator(node, key, type_t, name):
         # phandle or object, generate struct
         generated = _phandle_processor(myNodeProp, node)
         if generated:
-            print(generated)
             return ({key : generated[0]}, generated[1])
         return None
 
@@ -365,7 +364,6 @@ def _new_platdata_generator(node, key, type_t, name):
                 if myNodeProp.name == "interrupts-extended":
                     generated = _phandle_processor(myNodeProp, node)
                     if generated:
-                        print(generated)
                         return ({key : generated[0]}, generated[1])
                     return None
                 toFind = "interrupt-parent"
