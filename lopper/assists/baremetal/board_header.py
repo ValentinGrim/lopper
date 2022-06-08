@@ -51,7 +51,7 @@ class BoardHeader:
 
         self._header.write("""/*
  * This file has been automatically generated using lopper
- * @script        tfm_config.py
+ * @script        dt_to_c.py
  */
 
 #ifndef __BOARD_HEADER_H__
@@ -62,7 +62,7 @@ class BoardHeader:
 """)
         self._source.write("""/*
  * This file has been automatically generated using lopper
- * @script        tfm_config.py
+ * @script        dt_to_c.py
  */
 
 #include "board_header.h"
@@ -82,6 +82,9 @@ class BoardHeader:
         """
         if not list(struct.keys())[0] in self._struct.keys():
             self._struct.update(struct)
+
+    def struct_keys():
+        return self._struct.keys()
 
     def add2typedef(self, typedef):
         """
@@ -108,8 +111,11 @@ class BoardHeader:
         """
         Setter for internal _const
         """
-        if not name in self._struct.keys():
+        if not name in self._const.keys():
             self._const.update({name : const})
+
+    def const_keys(self):
+        return self._const.keys()
 
     def update_type(self, name, key, type_t):
         """
@@ -156,7 +162,7 @@ class BoardHeader:
         self._source.write('\n')
         for struct_n, struct_v in sorted(self._struct.items()):
             self._source.write("struct %s_s{\n" % struct_n.replace("-","_"))
-            for name, type_t in struct_v.items():
+            for name, type_t in struct_v['required'].items():
                 if type(type_t) == dict:
                     for k,v in type_t.items():
                         self._source.write("    const %s %s;\n" % (v,k.replace(",","_").replace("-","_")))
@@ -174,8 +180,12 @@ class BoardHeader:
         for const_n, const_v in self._const.items():
             type_t = const_v["type"].replace("-","_")
             self._source.write("const %s %s = {\n" % (type_t,const_n.replace("-","_")))
-            for name, value in const_v['values'].items():
-                self._source.write("    .%s = %s,\n" % (name, value))
+            for name, value in const_v['required'].items():
+                if type(value) == dict:
+                    for k,v in value.items():
+                        self._source.write("    .%s = %s,\n" % (k,v))
+                else:
+                    self._source.write("    .%s = %s,\n" % (name.replace(',','_').replace('-','_'), value))
             self._source.write("};\n")
 
         self._source.close()
