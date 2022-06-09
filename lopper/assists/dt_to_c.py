@@ -63,8 +63,7 @@ def baremetal_config_generator(tgt_node, sdt, options):
 
     for node in clean_node_list:
         struct_generator(node)
-        # platdata_generator(node)
-        new_platdata_generator(node)
+        platdata_generator(node)
     myBoardHeader.close()
 
     return True
@@ -128,6 +127,10 @@ def struct_generator(node, return_struct = False):
             (str) | (dict): The name of the generated struct or the generated struct
     """
     struct_name = node.type[0].replace(',','_').replace('-','_')
+    if struct_name in myBoardHeader.struct_keys() and not return_struct:
+        # Struct has already been generated and, as return_struct is false
+        # It mean we don't want to get the original struct
+        return struct_name.upper() + '_S *'
 
     myBinding = mySDTBindings.get_binding(node.type[0])
     if myBinding:
@@ -208,7 +211,7 @@ def _struct_generator(node, myProp, node_name):
     return None
 
 
-def new_platdata_generator(myNode):
+def platdata_generator(myNode):
     """
                                 [WIP]
     Replacement for platdata_generator() including optional properties
@@ -278,7 +281,7 @@ def new_platdata_generator(myNode):
                 if i:
                     type_t = type_t['type']
 
-                generated = _new_platdata_generator(node, key, type_t, name)
+                generated = _platdata_generator(node, key, type_t, name)
 
                 if not generated:
                     continue
@@ -300,7 +303,7 @@ def new_platdata_generator(myNode):
     return main_name
 
 
-def _new_platdata_generator(node, key, type_t, name):
+def _platdata_generator(node, key, type_t, name):
     """
     Will be called by platdata_generator to generate platdata for the given prop
 
@@ -338,7 +341,10 @@ def _new_platdata_generator(node, key, type_t, name):
                 key_t = "interrupts-extended"
             else:
                 return None
-        myNodeProp = node[key_t]
+            try:
+                myNodeProp = node[key_t]
+            except:
+                return None
 
     # Now that we have our basis, we have to generate plat data depeding on type
     if type_t == 'void *':
@@ -412,6 +418,9 @@ def _new_platdata_generator(node, key, type_t, name):
     return ({key : hex(myNodeProp.value[0])}, None)
 
 def _phandle_processor(myNodeProp, node):
+    # Necessary name for _array_generator
+    node_name = node.name.replace('@','_').replace('-','_').upper()
+
     if len(myNodeProp.value) == 1:
         # Get the node and try to gen a struct for it
         pnode = node.tree.pnode(myNodeProp .value[0])
@@ -420,18 +429,115 @@ def _phandle_processor(myNodeProp, node):
         if not struct:
             return None
         # Generate platdata for it
-        name = new_platdata_generator(pnode)
+        name = platdata_generator(pnode)
         return (name, struct)
 
-    name_t = str()
-    if myNodeProp.name[-1] == "s":
-        name_t = "#" + myNodeProp.name[:-1] + "-cells"
-    elif myNodeProp.name == "interrupts-extended":
-        name_t = "#interrupt-cells"
-
+    # #***-cells name for searching in the dt
     pnode = node.tree.pnode(myNodeProp.value[0])
-    if name_t:
-        return None
+
+    cells_t = [key for key in pnode.keys() if key.endswith("-cells")]
+    if len(cells_t) > 1:
+        cells_t = [key for key in cells_t if myNodeProp.name[-1] in key]
+        if cells_t:
+            cells_t = cells_t[0]
+    elif cells_t:
+        cells_t = cells_t[0]
+
+
+
+    if cells_t:
+        # We should have informations on the number of cells
+        name_t = list()
+        tmp = [key for key in node.keys() if key.endswith('-names')]
+        if len(tmp) > 1:
+            tmp1 = myNodeProp.name[:-1]
+            if myNodeProp.name == "interrupts-extended":
+                tmp1 = 'interrupts'
+            elif myNodeProp.name == "mboxes":
+                tmp1 = 'mbox'
+
+            tmp = [key for key in tmp if tmp1 in key]
+            if tmp:
+                name_t = node[tmp[0]].value
+        elif tmp and myNodeProp[:-2] in tmp :
+            name_t = node[tmp[0]].value
+
+        i = 0
+        j = 0
+        # Return vars
+        name_d = dict()
+        struct_d = dict()
+
+        while i < len(myNodeProp.value):
+            if cells_t in pnode.keys():
+                # We have cells informations
+                cells = pnode[cells_t].value[0]
+            else:
+                # We do not have any informations on the number of cells
+                # We will asume that this is a phandle with no value(s) attached
+                cells = 0
+
+            struct = struct_generator(pnode)
+
+            if not struct:
+                return None
+            # Generate platdata for it
+            name = platdata_generator(pnode)
+
+            # Generate a name for the element(s) based on the name if found
+            if name_t:
+                gen_name = myNodeProp.name + '_' + name_t.pop(0)
+            else:
+                if len(myNodeProp.value) == cells + 1:
+                    gen_name = myNodeProp.name
+                else:
+                    gen_name = myNodeProp.name + '_' + str(j)
+                j += 1
+
+            gen_name = gen_name.replace(',','_').replace('-','_')
+            gen_name = gen_name.replace('_extended','')
+
+            struct_name = myNodeProp.name + '_' + pnode.name.split('@')[0]
+            struct_name = struct_name.replace(',','_').replace('-','_')
+            struct_name = struct_name.replace('_extended','')
+
+            if cells == 0:
+                struct_d.update({gen_name : struct})
+                name_d.update({gen_name : name})
+
+                i += 1
+                if i < len(myNodeProp.value):
+                    pnode = node.tree.pnode(myNodeProp.value[i])
+                continue
+
+            elif cells == 1:
+                # Only one value attached, assuming it to be int32
+                type_t = 'uint32_t'
+                value = myNodeProp.value[i+1]
+
+            else:
+                # Multiple values attached to
+                type_t = 'uint32_t *'
+
+                array = _array_generator(node_name, gen_name,
+                                         type_t, myNodeProp.value[i+1: i+cells])
+
+                myBoardHeader.add2generated(array[0])
+                value = gen_name.upper() + '_' + node_name
+
+            if struct in struct_d.values():
+                struct_d.update({gen_name   : type_t})
+                name_d.update({gen_name     : value})
+            else:
+                struct_d.update({struct_name    : struct,
+                                 gen_name       : type_t})
+                name_d.update({struct_name  : name,
+                               gen_name     : value})
+
+            i += cells + 1
+            if i < len(myNodeProp.value):
+                pnode = node.tree.pnode(myNodeProp.value[i])
+        return(name_d, struct_d)
 
     else:
         # We don't have any informations on number of cells
@@ -444,7 +550,7 @@ def _phandle_processor(myNodeProp, node):
         if not struct:
             return None
         # Generate platdata for it
-        name = new_platdata_generator(pnode)
+        name = platdata_generator(pnode)
 
         gen_name = myNodeProp.name.replace(',','_').replace('-','_')
 
@@ -457,15 +563,12 @@ def _phandle_processor(myNodeProp, node):
         else:
             # Multiple values attached to phandle
             # Generate array with values
-            # Necessary name for _array_generator
-            node_name = node.name.replace('@','_').replace('-','_').upper()
-
             # Assuming uint32_t as default type
             type_t = 'uint32_t *'
             # Generating array and add it to generated
-            generated = _array_generator(node_name, gen_name,
+            array = _array_generator(node_name, gen_name,
                                          type_t, myNodeProp.value[1:])
-            myBoardHeader.add2generated(generated[0])
+            myBoardHeader.add2generated(array[0])
             # Update value with the name of array
             value = gen_name.upper() + '_' + node_name
 
@@ -511,194 +614,6 @@ def _array_generator(name, key, type_t, value, size = 1):
             generated += str(hex(val)) + " , "
         # End the line and remove the laste " , "
         return (generated[:-3] + "}};\n", True)
-
-def platdata_generator(node):
-    """
-    This function will try to generate a declaration based on a struct for the given node
-
-        Parameters:
-            node (lopper.tree.LopperNode): The node you want to generate platdata for
-    """
-    nodeStruct = myBoardHeader[node.name.split('@')[0]]
-    if nodeStruct:
-        name = node.name.replace('@','_').replace('-','_').upper()
-
-        struct_name = node.name.split('@')[0].upper() + "_S"
-        myBoardHeader.add2extern("extern const %s %s;\n" % (struct_name,name))
-        const_t = {'type' : struct_name, 'values' : dict()}
-
-        nodeStructDict = nodeStruct.copy()
-        for key, type_t in nodeStructDict.items():
-            if not type_t:
-                print(nodeStruct)
-            if any(pattern in key for pattern in ("-names","-controller")):
-                continue
-
-            myBinding = mySDTBindings.get_binding(node['compatible'].value[0])
-            if not myBinding:
-                # FIXME: py-dtbindings do not handle patternProperties
-                const_t = None
-                continue
-
-            myProp = myBinding.get_prop_by_name(key)
-
-            try:
-                myNodeProp = node[key]
-            except KeyError:
-                # Item name might follow a pattern
-                key_t = ''
-                for item in node:
-                    prop_t = myBinding.get_prop_by_name(item.name)
-                    if prop_t:
-                        if prop_t.name == myProp.name:
-                            key_t = item.name
-                            break
-                if not key_t:
-                    # FIXME:
-                    if key == "interrupts":
-                        key_t = "interrupts-extended"
-                myNodeProp = node[key_t]
-
-            # Now, generate plat data depending of type
-            if type_t == 'void *':
-                # Void * means a phandle or a sub object
-                # To process that case, we should generate a new struct
-
-                ret = _generate_sub_struct(myNodeProp, node)
-                if ret:
-                    const_t['values'].update(ret)
-
-            elif '*' in type_t:
-                if '**' in type_t:
-                    prop_t = myProp['maxItems']
-                    if prop_t and prop_t.value == 1:
-                    # In case bindings explicitly say that maxItems = 1
-                    # We are facing 1D array
-                        if prop_t.value == 1:
-                            type_t = type_t.replace('**','*')
-                            myBoardHeader.update_type(node.name.split('@')[0],
-                                                      key, type_t)
-                            # Simple array
-                            _generate_simple_array(type_t, key ,name, myNodeProp)
-                            const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
-
-                    # We might be facing 2D array we must check using #*-cells property
-                    else:
-                        toFind = str()
-
-                        if key == "reg":
-                            toFind = "#address-cells"
-                        elif key == "interrupts":
-                            if myNodeProp.name == "interrupts-extended":
-                                # Generate sub struct for phandle in interrupts
-                                ret = _generate_sub_struct(myNodeProp, node)
-                                if ret:
-                                    const_t['values'].update(ret)
-                                continue
-                            # Else
-                            toFind = "interrupt-parent"
-                        else:
-                            # I Actually didn't saw any node falling here
-                            # Maybe there is something to implemente here
-                            print("[NIY ]: Property %s for node %s not processed" %
-                                  (key, node.name))
-                            const_t["values"].update({key : "NULL"})
-                            continue
-
-                        tmp_node = node
-                        while not toFind in tmp_node.keys():
-                            if not tmp_node.parent:
-                                print("[ERR ]: No %s found for %s." % (toFind,node.name))
-                                print("[ERR ]: No more parent node left to find it.")
-                                print("[ERR ]: Is your tree complete ?")
-                                sys.exit(-1)
-                            tmp_node = tmp_node.parent
-
-                        size = int()
-                        if key == "reg":
-                            size = (tmp_node["#address-cells"].value[0] +
-                                    tmp_node["#size-cells"].value[0])
-                        elif key == "interrupts":
-                            interrupt_parent = node.tree.pnode(tmp_node["interrupt-parent"].value[0])
-                            size = interrupt_parent["#interrupt-cells"].value[0]
-
-                        type_t = type_t.replace("**","*")
-                        myBoardHeader.update_type(node.name.split('@')[0], key, type_t)
-
-                        if len(node[key].value) == size:
-                            _generate_simple_array(type_t, key, name, myNodeProp)
-                        else:
-                            _generate_simple_array(type_t, key, name, myNodeProp, size)
-                        const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
-
-                else:
-                    # Simple array
-                    if len(myNodeProp.value) == 1:
-                        myBoardHeader.update_type(node.name.split('@')[0], key, type_t.replace('*',''))
-                        const_t['values'].update({key : myNodeProp.value[0]})
-                    else:
-                        _generate_simple_array(type_t, key ,name, myNodeProp)
-                        const_t['values'].update({key : "%s_%s" % (key.upper(),name)})
-
-            elif isinstance(type_t,dict):
-                # Multiple type for the given node
-                # Or struct may already have been modified
-                i = 0
-                for k, v in type_t.items():
-                    #print(k,v)
-                    if not '*' in v:
-                        pass
-                    elif "void" in v:
-                        ret = _generate_sub_struct(myNodeProp, node)
-                        if ret:
-                            const_t['values'].update(ret)
-                    i += 1
-
-            else:
-                pass
-        if const_t:
-            print(const_t)
-            myBoardHeader.add2const(const_t, name)
-
-
-def _generate_simple_array(type_t, key ,name, myNodeProp, size = 0):
-    """
-    Genetate C array for platdata_generator()
-
-        Parameters:
-            type_t  (str): The type of the future array
-            key     (str): The name of the property
-            name    (str): The name of the struct you generate a array for
-            myNodeProp (lopper.tree.LopperProp): The properties from devicetree
-                                                 to fill in the araay
-            size    (int): Size from size-cells + address-cells if needed
-                           This is used in case we have 2D array
-
-    """
-    generated = "const %s" % type_t.replace('*','')
-    if size == 0 or size >= len(myNodeProp.value):
-        generated += "%s_%s[%i] = {" % (key.upper(),name,len(myNodeProp.value))
-        for val in myNodeProp.value:
-            generated += str(hex(val)) + " , "
-        # End the line and remove the last " , "
-        generated = generated[:-3] + "};\n"
-
-    else:
-        generated += ("%s_%s[%i][%i] = {{" %
-                      (key.upper(),name,len(myNodeProp.value)/size,size))
-        for x, val in enumerate(myNodeProp.value):
-            if x % size == 0 and x != 0:
-                generated = generated[:-3]
-                generated += "},{"
-            generated += str(hex(val)) + " , "
-        # End the line and remove the laste " , "
-        generated = generated[:-3] + "}};\n"
-        # Update type
-        struct_name = name.lower().rsplit("_",1)[0].replace("_","-")
-        myBoardHeader[struct_name][key] = { key + ("[%i]" % size) : type_t}
-
-
-    myBoardHeader.add2generated(generated)
 
 def _generate_sub_struct(myNodeProp, node):
     """

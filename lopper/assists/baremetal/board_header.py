@@ -83,7 +83,7 @@ class BoardHeader:
         if not list(struct.keys())[0] in self._struct.keys():
             self._struct.update(struct)
 
-    def struct_keys():
+    def struct_keys(self):
         return self._struct.keys()
 
     def add2typedef(self, typedef):
