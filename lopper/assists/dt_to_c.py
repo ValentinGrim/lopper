@@ -10,6 +10,7 @@ import yaml
 
 from shutil         import rmtree
 from lopper.tree     import *
+from copy import deepcopy
 
 sys.path.append(os.path.dirname(__file__) + "/baremetal")
 
@@ -265,15 +266,17 @@ def platdata_generator(myNode):
                 nodeStruct = original
 
         properties = "required"
-        platdata = {'type'      :  struct_name + '_s',
+        platdata = {'type'      :  struct_name.upper() + '_S',
                     'required'  :  dict(),
                     'optional'  :  dict()}
+
+        structCpy = deepcopy(nodeStruct)
         for i in range(2):
             if i:
                 properties = "optional"
 
             # All necessary struct update should be done on this tmp one
-            structCpy = nodeStruct.copy()
+
             for key, type_t in nodeStruct[properties].items():
 
                 extern_t = "extern const %s %s;\n" % (struct_name,name)
@@ -299,7 +302,11 @@ def platdata_generator(myNode):
                 platdata[properties].update(generated[0])
 
         if platdata['required']:
+            platdata = struct_cleaner(platdata)
             myBoardHeader.add2const(platdata, name)
+        structCpy = struct_cleaner(structCpy)
+        myBoardHeader.add2struct({struct_name : structCpy})
+
     return main_name
 
 
@@ -497,13 +504,13 @@ def _phandle_processor(myNodeProp, node):
             gen_name = gen_name.replace(',','_').replace('-','_')
             gen_name = gen_name.replace('_extended','')
 
-            struct_name = myNodeProp.name + '_' + pnode.name.split('@')[0]
+            struct_name = pnode.name.split('@')[0]
             struct_name = struct_name.replace(',','_').replace('-','_')
             struct_name = struct_name.replace('_extended','')
 
             if cells == 0:
                 struct_d.update({gen_name : struct})
-                name_d.update({gen_name : name})
+                name_d.update({gen_name : '&' + name})
 
                 i += 1
                 if i < len(myNodeProp.value):
@@ -531,7 +538,7 @@ def _phandle_processor(myNodeProp, node):
             else:
                 struct_d.update({struct_name    : struct,
                                  gen_name       : type_t})
-                name_d.update({struct_name  : name,
+                name_d.update({struct_name  : '&' + name,
                                gen_name     : value})
 
             i += cells + 1
@@ -572,7 +579,7 @@ def _phandle_processor(myNodeProp, node):
             # Update value with the name of array
             value = gen_name.upper() + '_' + node_name
 
-        name = {gen_name             : name,
+        name = {gen_name             : '&' + name,
                 gen_name + '_value'  : value}
         struct = {gen_name              : struct,
                   gen_name + '_value'   : type_t}
@@ -640,7 +647,7 @@ def check_type(node, node_name,node_prop):
             node_name (str): The node name we want to determine type
             node_prop (bindings.MainProp): The node poperties that contains types list
 
-        Returns:
+        Returns:structCpy
             (str): A type (e.g. uint32_t)
     """
     list_t = []
@@ -696,3 +703,23 @@ def check_type(node, node_name,node_prop):
                             return node_prop.type[1]
     # No return in for loop means value fit in first
     return node_prop.type[0]
+
+def struct_cleaner(myStruct):
+    list_t = list()
+    properties = 'required'
+    myStruct_t = deepcopy(myStruct)
+    for i in range(2):
+        for k,v in myStruct[properties].items():
+            if isinstance(v,dict) and not 'presence' in v.keys():
+                for x,y in v.items():
+                    if x in list_t:
+                        _ = myStruct_t[properties][k].pop(x)
+                        continue
+                    list_t.append(x)
+            else:
+                if k in list_t:
+                    _ = myStruct_t[properties].pop(k)
+                    continue
+                list_t.append(k)
+        properties = 'optional'
+    return myStruct_t

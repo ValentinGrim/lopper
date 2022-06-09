@@ -6,6 +6,7 @@
 #*/
 
 import sys
+from copy import deepcopy
 
 class BoardHeader:
     def __init__(self, path):
@@ -73,15 +74,15 @@ class BoardHeader:
         Magic method that return an item from self._struct if exist
         """
         if name in self._struct.keys():
-            return self._struct[name].copy()
+            return deepcopy(self._struct[name])
         return None
 
     def add2struct(self, struct):
         """
         Setter for internal _struct
         """
-        if not list(struct.keys())[0] in self._struct.keys():
-            self._struct.update(struct)
+        self._struct.update(struct)
+
 
     def struct_keys(self):
         return self._struct.keys()
