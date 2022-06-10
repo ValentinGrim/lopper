@@ -410,11 +410,12 @@ def _platdata_generator(node, key, type_t, name):
             gen_name = key.upper().replace('-','_').replace(',','_') + "_" + name
 
             new_type = None
+
             if "**" in type_t:
                 new_type = type_t.replace('**','*')
 
             if array[1]:
-                new_type = { key + ("[%i]" % size) : new_type}
+                new_type = { "(*%s)[%i]" %(key,size) : type_t.replace('*','')}
 
             myBoardHeader.add2generated(array[0])
             return ({key : gen_name}, new_type)
@@ -520,7 +521,7 @@ def _phandle_processor(myNodeProp, node):
             elif cells == 1:
                 # Only one value attached, assuming it to be int32
                 type_t = 'uint32_t'
-                value = myNodeProp.value[i+1]
+                value = hex(myNodeProp.value[i+1])
 
             else:
                 # Multiple values attached to
@@ -564,7 +565,7 @@ def _phandle_processor(myNodeProp, node):
         # Now process the value(s) attache to the phandle...
         if len(myNodeProp.value[1:]) == 1:
             # Only one value attached to the phandle
-            value = myNodeProp.value[1]
+            value = (myNodeProp.value[1])
             type_t = 'uint32_t'
 
         else:
