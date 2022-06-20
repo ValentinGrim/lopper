@@ -348,10 +348,10 @@ def _platdata_generator(node, key, type_t, name):
                 key_t = "interrupts-extended"
             else:
                 return None
-            try:
-                myNodeProp = node[key_t]
-            except:
-                return None
+        try:
+            myNodeProp = node[key_t]
+        except:
+            return None
 
     # Now that we have our basis, we have to generate plat data depeding on type
     if type_t == 'void *':
@@ -362,6 +362,8 @@ def _platdata_generator(node, key, type_t, name):
         return None
 
     elif '*' in type_t:
+        if key == "st,syscfg-holdboot":
+            print("Here")
         # Array or matrix
         if len(myNodeProp.value) == 1:
             new_type = None
@@ -369,7 +371,7 @@ def _platdata_generator(node, key, type_t, name):
                 new_type = type_t.replace('**','*')
             return ({key : hex(myNodeProp.value[0])}, new_type)
         else:
-            # We msut search if there is any properties that define the number of
+            # We must search if there is any properties that define the number of
             # cells.
             if key == "reg":
                 toFind = "#address-cells"
@@ -445,12 +447,11 @@ def _phandle_processor(myNodeProp, node):
 
     cells_t = [key for key in pnode.keys() if key.endswith("-cells")]
     if len(cells_t) > 1:
-        cells_t = [key for key in cells_t if myNodeProp.name[-1] in key]
+        cells_t = [key for key in cells_t if myNodeProp.name[:-1] in key]
         if cells_t:
             cells_t = cells_t[0]
     elif cells_t:
         cells_t = cells_t[0]
-
 
 
     if cells_t:
@@ -505,7 +506,7 @@ def _phandle_processor(myNodeProp, node):
             gen_name = gen_name.replace(',','_').replace('-','_')
             gen_name = gen_name.replace('_extended','')
 
-            struct_name = pnode.name.split('@')[0]
+            struct_name = pnode.name.replace(',','_').replace('-','_').split('@')[0]
             struct_name = struct_name.replace(',','_').replace('-','_')
             struct_name = struct_name.replace('_extended','')
 
@@ -561,6 +562,7 @@ def _phandle_processor(myNodeProp, node):
         name = platdata_generator(pnode)
 
         gen_name = myNodeProp.name.replace(',','_').replace('-','_')
+        pnode_name = pnode.name.replace(',','_').replace('-','_').split('@')[0]
 
         # Now process the value(s) attache to the phandle...
         if len(myNodeProp.value[1:]) == 1:
@@ -580,10 +582,10 @@ def _phandle_processor(myNodeProp, node):
             # Update value with the name of array
             value = gen_name.upper() + '_' + node_name
 
-        name = {gen_name             : '&' + name,
-                gen_name + '_value'  : value}
-        struct = {gen_name              : struct,
-                  gen_name + '_value'   : type_t}
+        name = {pnode_name   : '&' + name,
+                gen_name    : value}
+        struct = {pnode_name    : struct,
+                  gen_name      : type_t}
         return(name, struct)
 
 def _array_generator(name, key, type_t, value, size = 1):
