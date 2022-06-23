@@ -21,7 +21,7 @@ from bindings         import SDTBindings, Prop
 from board_header     import BoardHeader
 
 # A tuple of pattern we can find in node property name that we don't want in C struct.
-non_processed_prop = ('#', '$', 'compatible', '-names', '-controller', '-parent', 'ranges')
+non_processed_prop = ('#', '$', 'compatible', 'name', 'controller', '-parent', 'ranges')
 
 def is_compat(node, compat_id):
     if re.search("baremetal_config,generate", compat_id):
@@ -60,7 +60,10 @@ def baremetal_config_generator(tgt_node, sdt, options):
     mySDTBindings = SDTBindings(verbose = verbose)
 
     global myBoardHeader
-    myBoardHeader = BoardHeader(path)
+    try:
+        myBoardHeader = BoardHeader(path, options['args'][1])
+    except IndexError:
+        myBoardHeader = BoardHeader(path)
 
     for node in clean_node_list:
         struct_generator(node)
@@ -149,7 +152,6 @@ def struct_generator(node, return_struct = False):
                     myProp = myBinding.get_prop_by_name(property)
 
                     if not myProp:
-                        # FIXME: py-dtbindings do not handle patternProperties
                         continue
 
                     prop_struct = _struct_generator(node, myProp,node.name.split('@')[0])

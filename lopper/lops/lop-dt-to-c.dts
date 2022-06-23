@@ -19,7 +19,9 @@
 			 compatible = "system-device-tree-v1,lop,assist-v1";
 			 node = "/";
 			 id = "baremetal_config,generate";
-			 options = "build";
+             // First arg is path for output files
+             // Seconde is the optional writter mode
+			 options = "build define";
 		 };
 	 };
  };
