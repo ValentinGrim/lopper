@@ -59,11 +59,15 @@ def baremetal_config_generator(tgt_node, sdt, options):
     global mySDTBindings
     mySDTBindings = SDTBindings(verbose = verbose)
 
-    global myBoardHeader
+
+    global optional_mode
     try:
-        myBoardHeader = BoardHeader(path, options['args'][1])
+        optional_mode = options['args'][1]
     except IndexError:
-        myBoardHeader = BoardHeader(path)
+        optional_mode = None
+
+    global myBoardHeader
+    myBoardHeader = BoardHeader(path, optional_mode)
 
     for node in clean_node_list:
         struct_generator(node)
@@ -286,7 +290,7 @@ def platdata_generator(myNode):
                 if i:
                     type_t = type_t['type']
 
-                generated = _platdata_generator(node, key, type_t, name)
+                generated = _platdata_generator(node, key, type_t, name, i)
 
                 if not generated:
                     continue
@@ -312,7 +316,7 @@ def platdata_generator(myNode):
     return main_name
 
 
-def _platdata_generator(node, key, type_t, name):
+def _platdata_generator(node, key, type_t, name, optional):
     """
     Will be called by platdata_generator to generate platdata for the given prop
 
@@ -348,11 +352,23 @@ def _platdata_generator(node, key, type_t, name):
             # FIXME:
             if key == "interrupts":
                 key_t = "interrupts-extended"
-            else:
-                return None
+
         try:
             myNodeProp = node[key_t]
         except:
+            if optional_mode == 'boolean':
+                if myProp.type != 'bool':
+
+                    if '*' in myProp.type:
+                        value = 'NULL'
+                    else:
+                        value = 0
+
+                    return ({key : {key.replace('-','_').replace(',','_') : value,
+                            key.replace('-','_').replace(',','_') + '_p' : 'false'}},
+                            None)
+
+                return({key.replace('-','_').replace(',','_') : 'false'}, None)
             return None
 
     # Now that we have our basis, we have to generate plat data depeding on type
@@ -364,8 +380,6 @@ def _platdata_generator(node, key, type_t, name):
         return None
 
     elif '*' in type_t:
-        if key == "st,syscfg-holdboot":
-            print("Here")
         # Array or matrix
         if len(myNodeProp.value) == 1:
             new_type = None
@@ -588,6 +602,8 @@ def _phandle_processor(myNodeProp, node):
                 gen_name    : value}
         struct = {pnode_name    : struct,
                   gen_name      : type_t}
+        print(name)
+        print()
         return(name, struct)
 
 def _array_generator(name, key, type_t, value, size = 1):

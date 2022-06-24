@@ -171,15 +171,19 @@ class BoardHeader:
         self._header.write('\n')
 
         # Source
+        if self.optional_mode == 'boolean':
+            self._optional_processor()
+
         sorted_struct = self._struct_sorter()
+
         self._source.write('\n')
         for struct_n, struct_v in sorted_struct.items():
             self._source.write("struct %s_s{\n" % struct_n.replace("-","_"))
             for item in struct_v:
                 if type(item[0]) == tuple:
                     if self.optional_mode == 'boolean':
-                        # TODO
-                        pass
+                        self._source.write("    const %s %s;\n" % (item[0][0],
+                                                                   item[1]))
                     elif self.optional_mode == 'define':
                         if item[0][1]:
                             self._header.write("#define %s_%s\n" % (struct_n.upper(),
@@ -215,13 +219,24 @@ class BoardHeader:
                     properties = 'optional'
                 else:
                     break
-                
+
             self._source.write("};\n")
 
         self._source.close()
 
         self._header.write('\n#endif // __BOARD_HEADER_H__')
         self._header.close()
+
+    def _optional_processor(self):
+        """
+        If optional mode is boolean, generate boolean that should indicate
+        presence of each optional properties.
+        """
+        optional = dict()
+        for struct_n, struct_v in self._struct.items():
+            for name, type_t in struct_v['optional'].items():
+                if type_t['type'] != 'bool':
+                    struct_v['required'].update({name + '_p' : 'bool'})
 
     def _struct_sorter(self):
         """

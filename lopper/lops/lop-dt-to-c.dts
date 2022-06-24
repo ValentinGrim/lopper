@@ -21,7 +21,7 @@
 			 id = "baremetal_config,generate";
              // First arg is path for output files
              // Seconde is the optional writter mode
-			 options = "build define";
+			 options = "build boolean";
 		 };
 	 };
  };
