@@ -371,11 +371,18 @@ def _platdata_generator(node, key, type_t, name, optional):
                 return({key.replace('-','_').replace(',','_') : 'false'}, None)
             return None
 
-    # Now that we have our basis, we have to generate plat data depeding on type
+    # Now that we have our basis, we have to generate plat data depending on type
     if type_t == 'void *':
         # phandle or object, generate struct
         generated = _phandle_processor(myNodeProp, node)
         if generated:
+            if optional and optional_mode == 'boolean':
+                if type(generated[0]) == dict:
+                    generated[0].update({key.replace('-','_').replace(',','_') + '_p' : 'true'})
+                    return ({key : generated[0]}, generated[1])
+                return ({key : {key.replace('-','_').replace(',','_') : generated[0],
+                        key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                        generated[1])
             return ({key : generated[0]}, generated[1])
         return None
 
@@ -385,6 +392,10 @@ def _platdata_generator(node, key, type_t, name, optional):
             new_type = None
             if "**" in type_t:
                 new_type = type_t.replace('**','*')
+            if optional and optional_mode == 'boolean':
+                return ({key : {key.replace('-','_').replace(',','_') : hex(myNodeProp.value[0]),
+                        key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                        new_type)
             return ({key : hex(myNodeProp.value[0])}, new_type)
         else:
             # We must search if there is any properties that define the number of
@@ -395,6 +406,10 @@ def _platdata_generator(node, key, type_t, name, optional):
                 if myNodeProp.name == "interrupts-extended":
                     generated = _phandle_processor(myNodeProp, node)
                     if generated:
+                        if optional and optional_mode == 'boolean':
+                            return ({key : {key.replace('-','_').replace(',','_') : generated[0],
+                                    key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                                    generated[1])
                         return ({key : generated[0]}, generated[1])
                     return None
                 toFind = "interrupt-parent"
@@ -436,11 +451,23 @@ def _platdata_generator(node, key, type_t, name, optional):
                 new_type = { "(*%s)[%i]" %(key,size) : type_t.replace('*','')}
 
             myBoardHeader.add2generated(array[0])
+
+            if optional and optional_mode == 'boolean':
+                return ({key : {key.replace('-','_').replace(',','_') : gen_name,
+                        key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                        new_type)
+
             return ({key : gen_name}, new_type)
 
 
     if type_t == 'bool':
         return ({key : 1}, None)
+
+    if optional and optional_mode == 'boolean':
+        return ({key : {key.replace('-','_').replace(',','_') : hex(myNodeProp.value[0]),
+                key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                None)
+
     return ({key : hex(myNodeProp.value[0])}, None)
 
 def _phandle_processor(myNodeProp, node):
@@ -456,7 +483,7 @@ def _phandle_processor(myNodeProp, node):
             return None
         # Generate platdata for it
         name = platdata_generator(pnode)
-        return (name, struct)
+        return ('&' + name, struct)
 
     # #***-cells name for searching in the dt
     pnode = node.tree.pnode(myNodeProp.value[0])
@@ -474,17 +501,17 @@ def _phandle_processor(myNodeProp, node):
         # We should have informations on the number of cells
         name_t = list()
         tmp = [key for key in node.keys() if key.endswith('-names')]
-        if len(tmp) > 1:
-            tmp1 = myNodeProp.name[:-1]
-            if myNodeProp.name == "interrupts-extended":
-                tmp1 = 'interrupts'
-            elif myNodeProp.name == "mboxes":
-                tmp1 = 'mbox'
 
+        tmp1 = myNodeProp.name[:-2]
+        if myNodeProp.name == "interrupts-extended":
+            tmp1 = 'interrupts'
+
+        if len(tmp) > 1:
             tmp = [key for key in tmp if tmp1 in key]
             if tmp:
                 name_t = node[tmp[0]].value
-        elif tmp and myNodeProp[:-2] in tmp :
+
+        elif tmp and [True for x in tmp if tmp1 in x]:
             name_t = node[tmp[0]].value
 
         i = 0
@@ -500,6 +527,8 @@ def _phandle_processor(myNodeProp, node):
             else:
                 # We do not have any informations on the number of cells
                 # We will asume that this is a phandle with no value(s) attached
+                cells = 0
+            if myNodeProp.name == 'dma-masters':
                 cells = 0
 
             struct = struct_generator(pnode)
@@ -543,9 +572,8 @@ def _phandle_processor(myNodeProp, node):
             else:
                 # Multiple values attached to
                 type_t = 'uint32_t *'
-
                 array = _array_generator(node_name, gen_name,
-                                         type_t, myNodeProp.value[i+1: i+cells])
+                                         type_t, myNodeProp.value[i+1: i+cells+1])
 
                 myBoardHeader.add2generated(array[0])
                 value = gen_name.upper() + '_' + node_name
@@ -602,8 +630,6 @@ def _phandle_processor(myNodeProp, node):
                 gen_name    : value}
         struct = {pnode_name    : struct,
                   gen_name      : type_t}
-        print(name)
-        print()
         return(name, struct)
 
 def _array_generator(name, key, type_t, value, size = 1):
