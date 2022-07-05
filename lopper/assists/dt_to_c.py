@@ -141,9 +141,9 @@ def struct_generator(node, return_struct = False):
         return struct_name.upper() + '_S *'
 
     myBinding = mySDTBindings.get_binding(node.type[0])
+
     if myBinding:
         # TODO: We should check required nodes to ensure that tree is well written
-
         typedef_t = "typedef struct %s_s %s_S;\n" % (struct_name,
                                                      struct_name.upper())
         struct_t = dict()
@@ -152,11 +152,11 @@ def struct_generator(node, return_struct = False):
         properties = myBinding.required()
         for i in range(2):
             for property in properties:
+
                 if not any(x in property for x in non_processed_prop):
                     myProp = myBinding.get_prop_by_name(property)
 
-                    if not myProp:
-                        continue
+                    if not myProp: continue
 
                     prop_struct = _struct_generator(node, myProp,node.name.split('@')[0])
                     if not prop_struct: continue
@@ -184,6 +184,17 @@ def struct_generator(node, return_struct = False):
         myBoardHeader.add2struct({struct_name : struct_t})
         myBoardHeader.add2typedef(typedef_t)
         return struct_name.upper() + '_S *'
+
+    elif not node.type[0]:
+        myBinding = mySDTBindings.get_binding(node.parent.type[0])
+        if not myBinding: return None
+
+        myProp = myBinding.get_prop_by_name(node.name)
+        if not myProp: return None
+
+        if 'pin-controller' in node.parent.name:
+            for item in node.subnodes():
+                pass
     return None
 
 def _struct_generator(node, myProp, node_name):
@@ -220,8 +231,7 @@ def _struct_generator(node, myProp, node_name):
 
 def platdata_generator(myNode):
     """
-                                [WIP]
-    Replacement for platdata_generator() including optional properties
+    >>>TODO<<<
     """
     main_name = myNode.name.replace('@','_').replace('-','_').upper()
     if main_name in myBoardHeader.const_keys():
@@ -284,8 +294,8 @@ def platdata_generator(myNode):
             # All necessary struct update should be done on this tmp one
 
             for key, type_t in nodeStruct[properties].items():
-
-                extern_t = "extern const %s %s;\n" % (struct_name,name)
+                extern_t = "extern const %s %s;\n" % (struct_name.upper() + '_S',
+                                                      name)
 
                 if i:
                     type_t = type_t['type']
@@ -306,6 +316,7 @@ def platdata_generator(myNode):
                 if i:
                     structCpy['optional'][key]['presence'] = True
                 platdata[properties].update(generated[0])
+                myBoardHeader.add2extern(extern_t)
 
         if platdata['required']:
             platdata = struct_cleaner(platdata)
@@ -332,6 +343,7 @@ def _platdata_generator(node, key, type_t, name, optional):
 
     """
     myBinding = mySDTBindings.get_binding(node.type[0])
+
     if not myBinding:
         return None
 
@@ -476,7 +488,10 @@ def _phandle_processor(myNodeProp, node):
 
     if len(myNodeProp.value) == 1:
         # Get the node and try to gen a struct for it
-        pnode = node.tree.pnode(myNodeProp .value[0])
+        if isinstance(myNodeProp.value[0],str):
+            pnode = node.tree.nodes(myNodeProp.value[0])[0]
+        else:
+            pnode = node.tree.pnode(myNodeProp.value[0])
         struct = struct_generator(pnode)
 
         if not struct:
