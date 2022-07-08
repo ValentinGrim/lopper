@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(__file__) + "/baremetal")
 # Is there a better way to achieve that ???
 sys.path.append(os.path.dirname(__file__).rsplit("/", 2)[0] + "/py-dtbindings")
 
-from bindings         import SDTBindings, Prop
+from bindings         import SDTBindings, Prop, dtschema_types
 from board_header     import BoardHeader
 
 # A tuple of pattern we can find in node property name that we don't want in C struct.
@@ -52,6 +52,8 @@ def baremetal_config_generator(tgt_node, sdt, options):
 
     root_node = sdt.tree[tgt_node]
 
+    global pincfg
+    pincfg = False
     # Remove all disable nodes from the list
     global clean_node_list
     clean_node_list = get_active_node_list(root_node.subnodes())
@@ -143,9 +145,6 @@ def struct_generator(node, return_struct = False):
     myBinding = mySDTBindings.get_binding(node.type[0])
 
     if myBinding:
-        # TODO: We should check required nodes to ensure that tree is well written
-        typedef_t = "typedef struct %s_s %s_S;\n" % (struct_name,
-                                                     struct_name.upper())
         struct_t = dict()
         property_t = dict()
 
@@ -182,7 +181,6 @@ def struct_generator(node, return_struct = False):
         if return_struct: return struct_t
         # Else
         myBoardHeader.add2struct({struct_name : struct_t})
-        myBoardHeader.add2typedef(typedef_t)
         return struct_name.upper() + '_S *'
 
     elif not node.type[0]:
@@ -193,8 +191,52 @@ def struct_generator(node, return_struct = False):
         if not myProp: return None
 
         if 'pin-controller' in node.parent.name:
+            struct_name = node.name.replace('-','_').replace(',','_')
+            struct_t = {'required' : dict(), 'optional' : dict()}
+            platdata = {'type' : struct_name.upper() + '_S',
+                        'required' : dict(),
+                        'optional' : dict()}
+            ret = None
             for item in node.subnodes():
-                pass
+                if not item == node:
+                    if 'pins' in item.name:
+                        struct_t['required'].update({item.name : 'PINS_S'})
+                        if not pincfg:
+                            if not False:
+                                # Condition must be change to search if there is
+                                # a $ref on pincfg-node.yaml in bindings.
+                                ret = _init_pincfg(key_list=myProp[item.name]['properties'].keys())
+                            else:
+                                ret = _init_pincfg()
+
+                            for k,v in ret[1].items():
+                                if k not in ret[0].keys():
+                                    if 'type' in myProp[k]:
+                                        type_t = myProp[k]['type'].value
+                                    elif '$ref' in myProp[k]:
+                                        type_t = myProp[k]['$ref'].value
+                                        type_t = type_t.rsplit('/',1)[1]
+                                        if type_t in dtschema_types.keys():
+                                            type_t = dtschema_types[type_t]
+                                        else:
+                                            pass
+                                            # ???
+                                        ret[1][k] = type_t
+                            _init_enum(ret[0])
+                            myBoardHeader.add2struct({'pins' : {'required' : ret[1],
+                                                              'optional' : dict()}})
+
+                        name = item.name + '_' + node.name
+                        name = name.replace(',','_').replace('-','_')
+                        _pins_platdata(item, ret, name)
+                        platdata['required'].update({item.name : name.upper()})
+                    else:
+                        # ???
+                        pass
+
+            myBoardHeader.add2struct({struct_name : struct_t})
+            myBoardHeader.add2const(platdata, node.name.upper().replace('-','_'.replace(',','_')))
+            return struct_name.upper() + '_S *'
     return None
 
 def _struct_generator(node, myProp, node_name):
@@ -228,6 +270,114 @@ def _struct_generator(node, myProp, node_name):
         return {myProp.name : myProp.type}
     return None
 
+def _init_pincfg(pincfg_path = './download/bindings/pinctrl/pincfg-node.yaml', key_list = None):
+    """
+    If we somewhere find a node pinsx under a pin-controller,
+    This function will init pincfg dict tha should be used to define pins struct.
+
+        Parameters:
+            pincfg_path (str): Path to pincfg-node.yaml bindings (only used if no key_list)
+            key_list   (list): List of properties name given by the binding
+
+        Returns:
+            (tuple): ( enum_d , prop_d )
+                enum_d (dict): A dict containing enum { enum_name : values }
+                prop_d (dict): A dict containing all prop { prop_name : type }
+    """
+    global pincfg
+    if pincfg:
+        # If already init
+        return
+
+    if not key_list:
+        try:
+            file = open(pincfg_path, 'r')
+        except OSError:
+            print("[ERR ]: pincfg initialization was request")
+            print("[ERR ]: but pincfg-node.yaml was not found")
+            print("[ERR ]:", pincfg_path)
+            sys.exit(-1)
+
+        content = yaml.safe_load(file)
+        file.close()
+
+    pincfg_d = dict()
+    processed = list()
+
+    if key_list:
+        proc_list = key_list
+    else:
+        proc_list =  content['properties'].keys()
+
+    for key in proc_list:
+        base_key = key.split('-')[0]
+        processed.append(key)
+        if not base_key in pincfg_d.keys():
+            pincfg_d.update({base_key : [key]})
+        else:
+            pincfg_d[base_key].append(key)
+
+    enum_d = dict()
+    prop_d = dict()
+    for k,v in pincfg_d.items():
+        if len(v) == 1:
+            prop_d.update({v[0] : 'unknown'})
+        elif len(v) == 2:
+            test = ('enable','disable')
+            if v[0].rsplit('-',1)[1] in test and v[1].rsplit('-',1)[1] in test:
+                # Check if we have prop-enable et prop-disable so it's a bool
+                prop_d.update({v[0].rsplit('-',1)[0] : 'unknown'})
+            else:
+                enum_d.update({k : v})
+                prop_d.update({k : k.replace(",","_").upper()})
+            del test
+        else:
+            enum_d.update({k : v})
+            prop_d.update({k : k.replace(",","_").upper()})
+
+    pincfg = True
+    del pincfg_d
+    return(enum_d,prop_d)
+
+def _init_enum(enum_d):
+    for k,v in enum_d.items():
+        typedef = "typedef enum %s { %s_NONE ," % (k.replace(",","_"),
+                                                   k.replace(",","_").upper())
+        for val in v:
+            typedef = typedef + " %s ," % val.replace(",","_").replace("-","_").upper()
+        typedef = typedef[:-1] + "}%s;\n" % k.replace(",","_").upper()
+        myBoardHeader.add2typedef(typedef)
+
+def _pins_platdata(pin, struct, name):
+    platdata = {'type'      :  'PINS_S',
+                'required'  :  dict(),
+                'optional'  :  dict()}
+    for key, val in struct[1].items():
+        k = [k for k,v in pin.items() if k.startswith(key)]
+
+        if val.isupper():
+            # Enum
+            if k:
+                value = pin[k[0]].name.upper().replace('-','_').replace(',','_')
+                platdata['required'].update({key : value})
+            else:
+                platdata['required'].update({key : val + '_NONE'})
+        else:
+            if k:
+                value = pin[k[0]].value
+                if 'int' in val:
+                    if len(value) == 1:
+                        platdata['required'].update({key : value[0]})
+                    else:
+                        value = _array_generator(name.upper(), key,
+                                                 val, value)
+                        myBoardHeader.add2generated(value[0])
+                        gen_name = key + '_' + name
+                        gen_name = gen_name.upper().replace('-','_').replace(',','_')
+                        platdata['required'].update({key : gen_name})
+            else:
+                platdata['required'].update({key : -1})
+    myBoardHeader.add2const(platdata, name.upper())
 
 def platdata_generator(myNode):
     """
@@ -279,7 +429,7 @@ def platdata_generator(myNode):
             original = struct_generator(node, True)
             if nodeStruct != original:
                 modified = True
-                nodeStruct = original
+                nodeStruct = original.replace('-','_').replace(',','_')
 
         properties = "required"
         platdata = {'type'      :  struct_name.upper() + '_S',
@@ -498,6 +648,7 @@ def _phandle_processor(myNodeProp, node):
             return None
         # Generate platdata for it
         name = platdata_generator(pnode)
+        print(name)
         return ('&' + name, struct)
 
     # #***-cells name for searching in the dt

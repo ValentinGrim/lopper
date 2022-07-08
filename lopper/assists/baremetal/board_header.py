@@ -93,8 +93,10 @@ class BoardHeader:
         """
         Setter for internal _struct
         """
+        key = list(struct.keys())[0]
+        if key in self._struct.keys():
+            del self._struct[key]
         self._struct.update(struct)
-
 
     def struct_keys(self):
         return self._struct.keys()
@@ -164,37 +166,39 @@ class BoardHeader:
             self._header.write(typedef)
 
         self._header.write('\n')
-
-        for extern in sorted(self._extern):
-            self._header.write(extern.replace("-","_"))
-
-        self._header.write('\n')
-
-        # Source
+        
         if self.optional_mode == 'boolean':
             self._optional_processor()
 
         sorted_struct = self._struct_sorter()
 
-        self._source.write('\n')
+        tmp_header = str()
+        self._header.write('\n')
         for struct_n, struct_v in sorted_struct.items():
-            self._source.write("struct %s_s{\n" % struct_n.replace("-","_"))
+            self._header.write("typedef struct %s_s{\n" % struct_n.replace("-","_"))
             for item in struct_v:
                 if type(item[0]) == tuple:
                     if self.optional_mode == 'boolean':
-                        self._source.write("    const %s %s;\n" % (item[0][0],
+                        self._header.write("    const %s %s;\n" % (item[0][0],
                                                                    item[1]))
                     elif self.optional_mode == 'define':
                         if item[0][1]:
-                            self._header.write("#define %s_%s\n" % (struct_n.upper(),
-                                                                 item[1].upper()))
-                            self._source.write("    const %s %s;\n" % (item[0][0],
+                            tmp_header = (tmp_header + "#define %s_%s\n" %
+                                          (struct_n.upper(),item[1].upper()))
+                            self._header.write("    const %s %s;\n" % (item[0][0],
                                                                        item[1]))
                 else:
-                    self._source.write("    const %s %s;\n" % item)
-            self._source.write("};\n")
+                    self._header.write("    const %s %s;\n" % item)
+            self._header.write("}%s_S;\n" % struct_n.replace("-","_").upper())
 
-        self._source.write('\n')
+        self._header.write('\n')
+        self._header.write(tmp_header)
+        self._header.write('\n')
+
+        for extern in sorted(self._extern):
+            self._header.write(extern.replace("-","_"))
+
+        self._header.write('\n')
 
         for generated in sorted(self._generated):
             self._source.write(generated)
@@ -246,7 +250,7 @@ class BoardHeader:
                 struct (dict): A new struct based on self._source, sorted
         """
         struct = dict()
-        for struct_n, struct_v in sorted(self._struct.items()):
+        for struct_n, struct_v in self._struct.items():
             order = {'64' : list(), '*' : list(), '32' : list(), '16' : list(),
                      '8' : list(), 'char' : list(), 'bool' : list()}
             # Dual loop in order to fetch req + opt
@@ -278,7 +282,10 @@ class BoardHeader:
                                 key = "*"
                             else:
                                 key = [key for key in order.keys() if key in type_t['type']]
-                                key = key[0]
+                                if key:
+                                    key = key[0]
+                                else:
+                                    key = '*'
                             order[key].append((name ,
                                               (type_t['type'] ,
                                                type_t['presence'])))
@@ -288,7 +295,10 @@ class BoardHeader:
                             key = "*"
                         else:
                             key = [key for key in order.keys() if key in type_t]
-                            key = key[0]
+                            if key:
+                                key = key[0]
+                            else:
+                                key = '*'
                         order[key].append((name , type_t))
 
                 if self.optional_mode in ('boolean', 'define'):
