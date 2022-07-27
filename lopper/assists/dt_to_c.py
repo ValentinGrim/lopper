@@ -429,7 +429,7 @@ def platdata_generator(myNode):
             original = struct_generator(node, True)
             if nodeStruct != original:
                 modified = True
-                nodeStruct = original.replace('-','_').replace(',','_')
+                nodeStruct = original
 
         properties = "required"
         platdata = {'type'      :  struct_name.upper() + '_S',
@@ -498,6 +498,9 @@ def _platdata_generator(node, key, type_t, name, optional):
         return None
 
     myProp = myBinding.get_prop_by_name(key)
+
+    if not myProp:
+        return None
 
     try:
         myNodeProp = node[key]
