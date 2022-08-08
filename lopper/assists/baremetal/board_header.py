@@ -115,6 +115,19 @@ class BoardHeader:
         if not extern in self._extern:
             self._extern.append(extern)
 
+    def extern_updater(self, name, extern):
+        index = False
+        for i, item in enumerate(self._extern):
+            if name in item:
+                index = i
+                break
+
+        if index:
+            del self._extern[index]
+        self._extern.append(extern)
+
+        
+
     def add2generated(self, generated):
         """
         Setter for interanl _generated
@@ -131,6 +144,13 @@ class BoardHeader:
 
     def const_keys(self):
         return self._const.keys()
+
+    def platdata_exist_from_type(self, type_t):
+        type_t = type_t.upper()
+        for _, struct_v in self._const.items():
+            if type_t in struct_v["type"]:
+                return True
+        return False
 
     def update_type(self, name, key, type_t):
         """

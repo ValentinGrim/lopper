@@ -4,6 +4,7 @@
 #*
 #* SPDX-License-Identifier: BSD-3-Clause
 #*/
+from runpy import _ModifiedArgv0
 import sys
 import re
 import yaml
@@ -22,6 +23,8 @@ from board_header     import BoardHeader
 
 # A tuple of pattern we can find in node property name that we don't want in C struct.
 non_processed_prop = ('#', '$', 'compatible', 'name', 'controller', '-parent', 'ranges')
+# A tuple containing char specific to regex pattern to avoid naming struct member with a regex
+regex_detector = ('@','^','[',']','|','$','?')
 
 def is_compat(node, compat_id):
     if re.search("baremetal_config,generate", compat_id):
@@ -257,7 +260,7 @@ def _struct_generator(node, myProp, node_name):
     if type(myProp.type) == list:
         struct_t = dict()
         for item in myProp.type:
-            struct_tt.update({item[1] : item[0]})
+            struct_t.update({item[1] : item[0]})
         return {myProp.name : struct_t}
 
     # Tuple means that there is different type possible
@@ -453,27 +456,50 @@ def platdata_generator(myNode):
                 generated = _platdata_generator(node, key, type_t, name, i)
 
                 if not generated:
+                    del structCpy[properties][key]
                     continue
+
+                prop_key = key
+                if any(x in prop_key for x in regex_detector):
+                    # If key is a regex, rename it using the name of the prop in dt
+                    prop_key = list(generated[0].keys())[0]
+                    value = structCpy[properties][key]
+
+                    del structCpy[properties][key]
+
+                    structCpy[properties].update({prop_key : value})
 
                 # Update type on the tmp struct
                 if generated[1]:
                     if i:
-                        structCpy['optional'][key]['type'] = generated[1]
+                        structCpy['optional'][prop_key]['type'] = generated[1]
                     else:
-                        structCpy['required'][key] = generated[1]
+                        structCpy['required'][prop_key] = generated[1]
 
                 # Set presence to True if optional
                 if i:
-                    structCpy['optional'][key]['presence'] = True
+                    structCpy['optional'][prop_key]['presence'] = True
                 platdata[properties].update(generated[0])
                 myBoardHeader.add2extern(extern_t)
+
+        already_exist = myBoardHeader.platdata_exist_from_type(struct_name)
+
+        if modified and already_exist:
+            if not struct_cleaner(structCpy) == myBoardHeader[struct_name]:
+                struct_name = struct_name + "_1"
+                platdata["type"] = struct_name.upper() + "_S"
+                myBoardHeader.extern_updater(name, "extern const %s %s;\n" %
+                                             (struct_name.upper() + "_S", name))
 
         if platdata['required']:
             platdata = struct_cleaner(platdata)
             myBoardHeader.add2const(platdata, name)
+
+        if modified and already_exist:
+            if struct_cleaner(structCpy) == myBoardHeader[struct_name]:
+                continue
         structCpy = struct_cleaner(structCpy)
         myBoardHeader.add2struct({struct_name : structCpy})
-
     return main_name
 
 
@@ -536,6 +562,10 @@ def _platdata_generator(node, key, type_t, name, optional):
                 return({key.replace('-','_').replace(',','_') : 'false'}, None)
             return None
 
+    prop_name = key
+    if any(x in prop_name for x in regex_detector):
+        prop_name = myNodeProp.name
+
     # Now that we have our basis, we have to generate plat data depending on type
     if type_t == 'void *':
         # phandle or object, generate struct
@@ -543,12 +573,12 @@ def _platdata_generator(node, key, type_t, name, optional):
         if generated:
             if optional and optional_mode == 'boolean':
                 if type(generated[0]) == dict:
-                    generated[0].update({key.replace('-','_').replace(',','_') + '_p' : 'true'})
-                    return ({key : generated[0]}, generated[1])
-                return ({key : {key.replace('-','_').replace(',','_') : generated[0],
-                        key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                    generated[0].update({prop_name.replace('-','_').replace(',','_') + '_p' : 'true'})
+                    return ({prop_name : generated[0]}, generated[1])
+                return ({prop_name : {prop_name.replace('-','_').replace(',','_') : generated[0],
+                        prop_name.replace('-','_').replace(',','_') + '_p' : 'true'}},
                         generated[1])
-            return ({key : generated[0]}, generated[1])
+            return ({prop_name : generated[0]}, generated[1])
         return None
 
     elif '*' in type_t:
@@ -558,10 +588,10 @@ def _platdata_generator(node, key, type_t, name, optional):
             if "**" in type_t:
                 new_type = type_t.replace('**','*')
             if optional and optional_mode == 'boolean':
-                return ({key : {key.replace('-','_').replace(',','_') : hex(myNodeProp.value[0]),
-                        key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                return ({prop_name : {prop_name.replace('-','_').replace(',','_') : hex(myNodeProp.value[0]),
+                        prop_name.replace('-','_').replace(',','_') + '_p' : 'true'}},
                         new_type)
-            return ({key : hex(myNodeProp.value[0])}, new_type)
+            return ({prop_name : hex(myNodeProp.value[0])}, new_type)
         else:
             # We must search if there is any properties that define the number of
             # cells.
@@ -572,10 +602,10 @@ def _platdata_generator(node, key, type_t, name, optional):
                     generated = _phandle_processor(myNodeProp, node)
                     if generated:
                         if optional and optional_mode == 'boolean':
-                            return ({key : {key.replace('-','_').replace(',','_') : generated[0],
-                                    key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                            return ({prop_name : {prop_name.replace('-','_').replace(',','_') : generated[0],
+                                    prop_name.replace('-','_').replace(',','_') + '_p' : 'true'}},
                                     generated[1])
-                        return ({key : generated[0]}, generated[1])
+                        return ({prop_name : generated[0]}, generated[1])
                     return None
                 toFind = "interrupt-parent"
             else:
@@ -618,22 +648,22 @@ def _platdata_generator(node, key, type_t, name, optional):
             myBoardHeader.add2generated(array[0])
 
             if optional and optional_mode == 'boolean':
-                return ({key : {key.replace('-','_').replace(',','_') : gen_name,
-                        key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+                return ({prop_name : {prop_name.replace('-','_').replace(',','_') : gen_name,
+                        prop_name.replace('-','_').replace(',','_') + '_p' : 'true'}},
                         new_type)
 
-            return ({key : gen_name}, new_type)
+            return ({prop_name : gen_name}, new_type)
 
 
     if type_t == 'bool':
-        return ({key : 1}, None)
+        return ({prop_name : 1}, None)
 
     if optional and optional_mode == 'boolean':
-        return ({key : {key.replace('-','_').replace(',','_') : hex(myNodeProp.value[0]),
-                key.replace('-','_').replace(',','_') + '_p' : 'true'}},
+        return ({prop_name : {prop_name.replace('-','_').replace(',','_') : hex(myNodeProp.value[0]),
+                prop_name.replace('-','_').replace(',','_') + '_p' : 'true'}},
                 None)
 
-    return ({key : hex(myNodeProp.value[0])}, None)
+    return ({prop_name : hex(myNodeProp.value[0])}, None)
 
 def _phandle_processor(myNodeProp, node):
     # Necessary name for _array_generator
