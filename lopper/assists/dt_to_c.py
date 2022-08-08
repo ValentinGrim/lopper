@@ -681,7 +681,6 @@ def _phandle_processor(myNodeProp, node):
             return None
         # Generate platdata for it
         name = platdata_generator(pnode)
-        print(name)
         return ('&' + name, struct)
 
     # #***-cells name for searching in the dt
@@ -750,7 +749,7 @@ def _phandle_processor(myNodeProp, node):
             gen_name = gen_name.replace(',','_').replace('-','_')
             gen_name = gen_name.replace('_extended','')
 
-            struct_name = pnode.name.replace(',','_').replace('-','_').split('@')[0]
+            struct_name = myNodeProp.name.replace(',','_').replace('-','_')
             struct_name = struct_name.replace(',','_').replace('-','_')
             struct_name = struct_name.replace('_extended','')
 
@@ -805,7 +804,6 @@ def _phandle_processor(myNodeProp, node):
         name = platdata_generator(pnode)
 
         gen_name = myNodeProp.name.replace(',','_').replace('-','_')
-        pnode_name = pnode.name.replace(',','_').replace('-','_').split('@')[0]
 
         # Now process the value(s) attache to the phandle...
         if len(myNodeProp.value[1:]) == 1:
@@ -825,10 +823,10 @@ def _phandle_processor(myNodeProp, node):
             # Update value with the name of array
             value = gen_name.upper() + '_' + node_name
 
-        name = {pnode_name   : '&' + name,
-                gen_name    : value}
-        struct = {pnode_name    : struct,
-                  gen_name      : type_t}
+        name = {gen_name   : '&' + name,
+                gen_name + '_v'    : value}
+        struct = {gen_name    : struct,
+                  gen_name + '_v'     : type_t}
         return(name, struct)
 
 def _array_generator(name, key, type_t, value, size = 1):
