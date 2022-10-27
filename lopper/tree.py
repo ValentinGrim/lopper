@@ -32,7 +32,7 @@ global Lopper
 # utility function to return true or false if a number
 # is 32 bit, or not.
 def check_32_bit(n):
-    return n<1<<31
+    return (n & 0xFFFFFFFF00000000) == 0
 
 # used in node_filter
 class LopperAction(Enum):
@@ -1020,7 +1020,7 @@ class LopperProp():
                                         if type(prop_val[pval_index]) == str:
                                             phandle_tgt_name = prop_val[pval_index]
                                         else:
-                                            phandle_tgt_name = "invalid_phandle"
+                                            phandle_tgt_name = "&invalid_phandle"
                                     else:
                                         # strict and an invalid phandle, jump to the next record
                                         # were we the last record ? That means we could have an incorrectly
@@ -1035,14 +1035,15 @@ class LopperProp():
                                         drop_sub_record = True
                                         continue
                                 else:
-                                    phandle_tgt_name = r.label
-                                    if not phandle_tgt_name:
+                                    if r.label:
+                                        phandle_tgt_name = "&" + r.label
+                                    else:
                                         # the node has no label, we should label it, so we can reference it.
                                         # phandle_tgt_name = Lopper.phandle_safe_name( phandle_resolution.name )
                                         r.label_set( Lopper.phandle_safe_name( r.name ) )
-                                        phandle_tgt_name = r.label
+                                        phandle_tgt_name = "&" + r.label
 
-                                phandle_sub_record.append( "&{0}".format( phandle_tgt_name ) )
+                                phandle_sub_record.append( "{0}".format( phandle_tgt_name ) )
 
                             else:
                                 element = prop_val[pval_index]
@@ -1078,8 +1079,6 @@ class LopperProp():
                                 else:
                                     formatted_records.append( ";" )
                 else:
-                    if self.name == "access":
-                        print( "             no phandles, list of nums" )
                     # no phandles
                     if list_of_nums:
                         if self.binary:
@@ -1097,9 +1096,6 @@ class LopperProp():
                                 formatted_records.append( " " )
                             else:
                                 formatted_records.append( ", " )
-
-                        if self.name == "access":
-                            print( "                             resolving access property" )
                             
                         if list_of_nums:
                             if self.binary:

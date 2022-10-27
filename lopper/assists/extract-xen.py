@@ -99,6 +99,11 @@ def extract_xen( tgt_node, sdt, options ):
     # rename the containing node from /extracted to /passthrough
     extracted_node.name = "passthrough"
 
+    # copy sdt root compatibles into extracted node
+    root_compat = sdt.tree["/"]["compatible"].value
+    root_compat.append(extracted_node["compatible"].value)
+    extracted_node["compatible"].value = root_compat
+
     # walk the nodes in the tree, and look for the property "extracted,path"
     # and update it to "xen,path" (when conditions are met)
     for n in xen_tree:
@@ -118,7 +123,7 @@ def extract_xen( tgt_node, sdt, options ):
 
         try:
             ip = n["interrupt-parent"]
-            n["interrupt-parent"].value = 0xfde8
+            n["interrupt-parent"].value = "0xfde8"
             if verbose:
                 print( "[INFO][extract-xen]: %s interrupt parent found, updating" % n.name  )
 
@@ -174,14 +179,19 @@ def extract_xen( tgt_node, sdt, options ):
                         print( "[INFO][extract-xen]: reg found: %s copying and extending to xen,reg" % reg )
                     # make a xen,reg from it
                     xen_reg = LopperProp( "xen,reg" )
-                    xen_reg.value = copy.deepcopy( reg.value )
 
-                    # xen,reg has one additional [start size]. which are the first two
-                    # entries in the reg
-                    address = reg.value[0]
-                    size = reg.value[1]
-                    xen_reg.value.append( address )
-                    xen_reg.value.append( size )
+                    # split reg.value into chunks (memory regions) of 4 items (2 for address, 2 for size)
+                    reg_chunks  = [reg.value[x:x+4] for x in range(0, len(reg.value), 4)]
+
+                    # xen,reg is an array of <phys_addr size guest_addr> and we always
+                    # set guest_addr to phys_addr. Iterate over splitted memory regions
+                    # and fill in xen,reg according to the format mentioned above
+                    for i in range(len(reg_chunks)):
+                        addr = [reg_chunks[i][0], reg_chunks[i][1]]
+                        size = [reg_chunks[i][2], reg_chunks[i][3]]
+                        xen_reg.value.extend(addr)
+                        xen_reg.value.extend(size)
+                        xen_reg.value.extend(addr)
 
                     # magic. these need to be generated in the future
                     # xen_reg.value.extend( [0x0, 0xff110000, 0x0, 0x1000, 0x0, 0xff110000] )
