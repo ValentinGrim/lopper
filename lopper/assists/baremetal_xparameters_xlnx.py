@@ -76,7 +76,8 @@ def xlnx_generate_xparams(tgt_node, sdt, options):
             cci_en = None
 
     drvlist = xlnx_generate_bm_drvlist(tgt_node, sdt, options)
-    plat = DtbtoCStruct('xparameters.h')
+    xparams = os.path.join(sdt.outdir, f"xparameters.h")
+    plat = DtbtoCStruct(xparams)
     plat.buf('#ifndef XPARAMETERS_H   /* prevent circular inclusions */\n')
     plat.buf('#define XPARAMETERS_H   /* by using protection macros */\n')
     total_nodes = node_list
@@ -282,18 +283,18 @@ def xlnx_generate_xparams(tgt_node, sdt, options):
         plat.buf("\n#define XPAR_CACHE_COHERENT \n")
 
     #CPU Freq related defines
-    match_cpunodes = get_cpu_node(sdt, options)
-    if re.search("microblaze", options['args'][0]):
+    match_cpunode = get_cpu_node(sdt, options)
+    if re.search("microblaze", match_cpunode['compatible'].value[0]):
         try:
-            cpu_freq = match_cpunodes[0]['xlnx,freq'].value[0]
+            cpu_freq = match_cpunode['xlnx,freq'].value[0]
             plat.buf('\n#define XPAR_CPU_CORE_CLOCK_FREQ_HZ %s\n' % cpu_freq)
         except KeyError:
             pass
     else:
         try:
-            cpu_freq = match_cpunodes[0]['xlnx,cpu-clk-freq-hz'].value[0]
+            cpu_freq = match_cpunode['xlnx,cpu-clk-freq-hz'].value[0]
             plat.buf('\n\n#define XPAR_CPU_CORE_CLOCK_FREQ_HZ %s\n' % cpu_freq)
-            pss_ref = match_cpunodes[0]['xlnx,pss-ref-clk-freq'].value[0]
+            pss_ref = match_cpunode['xlnx,pss-ref-clk-freq'].value[0]
             plat.buf('#define XPAR_PSU_PSS_REF_CLK_FREQ_HZ %s\n' % pss_ref)
         except KeyError:
             pass

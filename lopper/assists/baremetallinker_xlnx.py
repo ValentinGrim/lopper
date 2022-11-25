@@ -57,12 +57,12 @@ def get_memranges(tgt_node, sdt, options):
         elif domain_node.propval('cpus') != ['']:
                 print('ERROR: os,type property is missing in the domain', domain_node.name)
 
-        match_cpunodes = get_cpu_node(sdt, options)
+        match_cpunode = get_cpu_node(sdt, options)
 
         # Check whether domain is mapped for current processor or not
         if bm_domain:
             shared_mem = []
-            if not domain_node['cpus'][0] == match_cpunodes[0].parent.phandle:
+            if not domain_node['cpus'][0] == match_cpunode.parent.phandle:
                 continue
             else:
                if domain_node.propval('include') != ['']:
@@ -107,12 +107,13 @@ def get_memranges(tgt_node, sdt, options):
     versal_noc_ch_ranges =  {"DDR_CH_1": "0x50000000000", "DDR_CH_2": "0x60000000000", "DDR_CH_3": "0x70000000000"}
 
     # Yocto Machine to CPU compat mapping
-    match_cpunodes = get_cpu_node(sdt, options)
-   
-    address_map = match_cpunodes[0].parent["address-map"].value
+    match_cpunode = get_cpu_node(sdt, options)
+    if not match_cpunode:
+        return
+    address_map = match_cpunode.parent["address-map"].value
     all_phandles = []
-    ns = match_cpunodes[0].parent["#ranges-size-cells"].value[0]
-    na = match_cpunodes[0].parent["#ranges-address-cells"].value[0]
+    ns = match_cpunode.parent["#ranges-size-cells"].value[0]
+    na = match_cpunode.parent["#ranges-address-cells"].value[0]
     cells = na + ns
     tmp = na
     while tmp < len(address_map):
@@ -192,7 +193,7 @@ def xlnx_generate_bm_linker(tgt_node, sdt, options):
     except IndexError:
         pass
 
-    with open('memory.ld', 'w') as fd:
+    with open(os.path.join(sdt.outdir,'memory.ld'), 'w') as fd:
         fd.write("MEMORY\n")
         fd.write("{\n")
         if memtest_config:
@@ -231,10 +232,9 @@ def xlnx_generate_bm_linker(tgt_node, sdt, options):
             fd.write("\t%s : ORIGIN = %s, LENGTH = %s\n" % (key, hex(start), hex(size)))
         fd.write("}\n")
 
-    src_dir = os.path.dirname(options['args'][1])
-    src_dir = os.path.dirname(src_dir)
-    appname = src_dir.rsplit('/', 1)[-1]
-    cmake_file = appname.capitalize() + str("Example.cmake")
+    src_dir = options['args'][1].rstrip(os.path.sep)
+    appname = os.path.basename(os.path.dirname(src_dir))
+    cmake_file = os.path.join(sdt.outdir, f"{appname.capitalize()}Example.cmake")
 
     ## To inline with existing tools point default ddr for linker to lower DDR
     lower_ddrs = ["axi_noc_0", "psu_ddr_0", "ps7_ddr_0"]
