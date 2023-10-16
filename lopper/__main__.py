@@ -17,6 +17,9 @@ import re
 
 from lopper import LopperSDT
 
+from lopper.log import _warning, _info, _error, _debug
+import logging
+
 lopper_directory = os.path.dirname(os.path.realpath(__file__))
 
 global device_tree
@@ -235,7 +238,7 @@ def main():
             print( "Error: input file %s does not exist" % i )
             sys.exit(1)
 
-        valid_ifile_types = [ ".dtsi", ".dtb", ".dts", ".yaml" ]
+        valid_ifile_types = [ ".json", ".dtsi", ".dtb", ".dts", ".yaml" ]
         itype = lopper.Lopper.input_file_type(i)
         if not itype in valid_ifile_types:
             print( "[ERROR]: unrecognized input file type passed" )
@@ -312,6 +315,11 @@ def main():
     device_tree = LopperSDT( sdt )
 
     atexit.register(at_exit_cleanup)
+
+    lopper.log._init( __name__ )
+    lopper.log._init( "___main.py__" )
+
+    lopper.log.init( verbose )
 
     # set some flags before we process the tree.
     device_tree.dryrun = dryrun

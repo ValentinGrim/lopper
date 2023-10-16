@@ -7,73 +7,32 @@
 # * SPDX-License-Identifier: BSD-3-Clause
 # */
 import sys
-import types
 import os
 import re
-from pathlib import Path
-from pathlib import PurePath
-from io import StringIO
-import contextlib
-import importlib
-from lopper import Lopper
-from lopper import LopperFmt
-import lopper
-from lopper.tree import *
-from re import *
 import yaml
+import glob
 
 sys.path.append(os.path.dirname(__file__))
-from baremetalconfig_xlnx import *
+
+from baremetalconfig_xlnx import compat_list, get_mapped_nodes
+import common_utils as utils
 
 def is_compat(node, compat_string_to_test):
     if re.search( "module,baremetaldrvlist_xlnx", compat_string_to_test):
         return xlnx_generate_bm_drvlist
     return ""
 
-def drv_copy_src(proc_name, fd, src_dir):
-    fd.write("foreach(drv ${DRIVER_LIST})\n")
-    fd.write("\texecute_process(\n")
-    src_dir = f"{src_dir}/XilinxProcessorIPLib/drivers/${{drv}}/src"
-    fd.write(f"\t\t\t COMMAND ${{CMAKE_COMMAND}} -E copy_directory {src_dir} ${{CMAKE_LIBRARY_PATH}}/../libsrc/${{drv}}/src\n") 
-    fd.write("\t\t\t)\n")
-    fd.write("endforeach()\n")
-    
-
-def drv_cmake_target(proc_name, fd, src_dir):
-    fd.write("foreach(drv ${DRIVER_TARGETS})\n")
-    fd.write(f'\tif (("${{drv}}" STREQUAL "uartps") OR\n')
-    fd.write(f'\t    ("${{drv}}" STREQUAL "uartpsv"))\n')
-    add_custom_target(proc_name, fd, src_dir, 1)
-    fd.write("\telse()\n")
-    add_custom_target(proc_name, fd, src_dir, 0)
-    fd.write("\tendif()\n")
-    fd.write("endforeach()\n")
-
-def add_custom_target(proc_name, fd, src_dir, stdin):
-    fd.write("\t\tadd_custom_target(\n")
-    fd.write("\t\t\t\t${drv} ALL\n")
-    src_dir = f"{src_dir}/XilinxProcessorIPLib/drivers/${{drv}}/src"
-    if stdin:
-        fd.write(f"\t\t\t\tCOMMAND lopper -O ${{CMAKE_LIBRARY_PATH}}/../libsrc/${{drv}}/src ${{SDT}} -- baremetalconfig_xlnx {proc_name} {src_dir} stdin\n")
-    else:
-        fd.write(f"\t\t\t\tCOMMAND lopper -O ${{CMAKE_LIBRARY_PATH}}/../libsrc/${{drv}}/src ${{SDT}} -- baremetalconfig_xlnx {proc_name} {src_dir}\n")
-    fd.write("\t\t\t\tBYPRODUCTS x${drv}_g.c\n")
-    fd.write("\t\t\t)\n")
-
-def add_xparam_target(proc_name, fd, src_dir):
-    fd.write("add_custom_target(\n")
-    fd.write("\t\txparam ALL\n")
-    fd.write(f'\t\tCOMMAND lopper -O ${{CMAKE_INCLUDE_PATH}}/ "${{SDT}}" -- baremetal_xparameters_xlnx {proc_name} {src_dir}\n')
-    fd.write("\t\tBYPRODUCTS xparameters.h\n")
-    fd.write("\t\t)\n")
-
 # tgt_node: is the baremetal config top level domain node number
 # sdt: is the system device-tree
 def xlnx_generate_bm_drvlist(tgt_node, sdt, options):
+    if options.get('outdir', {}):
+        sdt.outdir = options['outdir']
     root_node = sdt.tree[tgt_node]
     root_sub_nodes = root_node.subnodes()
-    compatible_list = []
-    driver_list = []
+    compatible_dict = {}
+    ip_dict = {}
+
+    driver_list = ["common"]
     node_list = []
     # Traverse the tree and find the nodes having status=ok property
     # and create a compatible_list from these nodes.
@@ -85,89 +44,94 @@ def xlnx_generate_bm_drvlist(tgt_node, sdt, options):
         except:
            pass
 
-    mapped_nodelist = get_mapped_nodes(sdt, node_list, options)
+    driver_ip_dict = {}
+    mapped_ip_dict = {}
+    if sdt.tree[tgt_node].propval('pruned-sdt') == ['']:
+        mapped_nodelist = get_mapped_nodes(sdt, node_list, options)
+    else:
+        mapped_nodelist = node_list
     for node in mapped_nodelist:
-        compatible_list.append(node["compatible"].value)
+        compatible_dict.update({node: node["compatible"].value})
+        node_name = node.propval('xlnx,name')
+        node_ip_name = node.propval('xlnx,ip-name')
+        if node_ip_name != [''] and node_name != ['']:
+            mapped_ip_dict.update({node_name[0]:node_ip_name[0]})
 
-    tmpdir = os.getcwd()
-    src_dir = options['args'][1]
-    os.chdir(src_dir)
-    os.chdir("XilinxProcessorIPLib/drivers/")
-    cwd = os.getcwd()
-    files = os.listdir(cwd)
-    depdrv_list = []
-    for name in files:
-        os.chdir(cwd)
-        if os.path.isdir(name):
-            os.chdir(name)
-            if os.path.isdir("data"):
-                os.chdir("data")
-                yamlfile = name + str(".yaml")
-                try:
-                    # Traverse each driver and find supported compatible list
-                    # match it aginst the compatible_list created above, if there
-                    # is a match append the driver name to the driver list.
-                    with open(yamlfile, 'r') as stream:
-                        schema = yaml.safe_load(stream)
-                        driver_compatlist = compat_list(schema)
-                        for comp in driver_compatlist:
-                            for c in compatible_list:
-                                match = [x for x in c if comp == x]
-                                if match:
-                                    driver_list.append(name)
-                                    try:
-                                        if schema['depends']:
-                                            depdrv_list.append(schema['depends'])
-                                    except:
-                                        pass
-                except FileNotFoundError:
-                    pass
+    yaml_file_list = []
+    repo_path_data = options['args'][1]
+    if utils.is_file(repo_path_data):
+        repo_schema = utils.load_yaml(repo_path_data)
+        drv_data = repo_schema['driver']
+        for entries in drv_data.keys():
+            try:
+                drv_path = drv_data[entries]['vless']
+            except KeyError:
+                drv_path = drv_data[entries]['path'][0]
+            drv_name = os.path.basename(drv_path)
+            # Incase of versioned driver strip the version info
+            drv_name = re.sub(r"_v.*_.*$", "", drv_name)
+            yaml_file_list += [os.path.join(drv_path, 'data', f"{drv_name}.yaml")]
+        has_drivers = [dir_name for dir_name in os.listdir(utils.get_dir_path(sdt.dts)) if "drivers" in dir_name]
+        if has_drivers:
+            has_drivers = os.path.join(utils.get_dir_path(sdt.dts), "drivers")
+            if utils.is_dir(has_drivers, silent_discard=False):
+                yaml_list = glob.glob(has_drivers + '/**/data/*.yaml', recursive=True)
+                yaml_file_list.extend(yaml_list)
+    else:
+        drv_dir = os.path.join(repo_path_data, "XilinxProcessorIPLib", "drivers")
+        if utils.is_dir(drv_dir, silent_discard=False):
+            yaml_file_list = glob.glob(drv_dir + '/**/data/*.yaml', recursive=True)
 
-    for depdrv in depdrv_list:
-        if isinstance(depdrv, list):
-            for dep in depdrv:
-                driver_list.append(dep)
-        else:
-            driver_list.append(depdrv)
-    driver_list = list(dict.fromkeys(driver_list))
-    # common driver needs to be present always
-    driver_list.append("common")
+    for yaml_file in yaml_file_list:
+        # Traverse each driver and find supported compatible list
+        # match it aginst the compatible_dict created above, if there
+        # is a match append the driver name to the driver list.
+        schema = utils.load_yaml(yaml_file)
+        driver_compatlist = compat_list(schema)
+        for comp in driver_compatlist:
+            for node,c in compatible_dict.items():
+                match = [x for x in c if comp == x]
+                if match:
+                    drv_name = utils.get_base_name(yaml_file).replace('.yaml','')
+                    driver_list += [drv_name]
+                    if schema.get('depends',{}):
+                        driver_list += list(schema['depends'].keys())
+                    node_name = node.propval('xlnx,name')
+                    ip_name = node.propval('xlnx,ip-name')
+                    driver_ip_dict.update({node_name[0]:ip_name[0]})
+                    if ip_name != ['']:
+                        ip_dict.update({node_name[0]:[ip_name[0], drv_name]})
+
+    generic_driver_dict = list(set(mapped_ip_dict.items()) - set(driver_ip_dict.items()))
+    for entries,ip_name in generic_driver_dict:
+        ip_dict.update({entries:[ip_name, "None"]})
+
+    ip_dict_keys = list(ip_dict.keys())
+    ip_dict_keys.sort()
+    ip_sorted_dict = {entries: ip_dict[entries] for entries in ip_dict_keys}
+
+    driver_list = list(set(driver_list))
     driver_list.sort()
-    os.chdir(tmpdir)
 
-    with open('distro.conf', 'w') as fd:
-        tmpdrv_list = [drv.replace("_", "-") for drv in driver_list]
-        tmp_str =  ' '.join(tmpdrv_list)
-        tmp_str = '"{}"'.format(tmp_str)
-        fd.write("DISTRO_FEATURES = %s" % tmp_str)
+    driver_list_for_yocto = []
+    yocto_pkg_config_entries = ""
 
-    with open('DRVLISTConfig.cmake', 'w') as cfd:
-        cfd.write("set(DRIVER_LIST %s)\n" % to_cmakelist(driver_list))
+    for drv in driver_list:
+        yocto_drv_name = drv.replace("_", "-")
+        driver_list_for_yocto += [yocto_drv_name]
+        yocto_pkg_config_entries += f'''
+PACKAGECONFIG[{yocto_drv_name}] = "${{RECIPE_SYSROOT}}/usr/lib/lib{drv}.a,,{yocto_drv_name},,"'''
 
-    cfd = open('CMakeLists.txt', 'w')
-    cfd.write("cmake_minimum_required(VERSION 3.15)\n")
-    cfd.write("project(libxil)\n")
-    proc_name = options['args'][0]
-    drv_targets = []
-    with open('libxil.conf', 'w') as fd:
-        for drv in driver_list:
-            drv_src = Path( os.path.join(src_dir,f"XilinxProcessorIPLib/drivers/{drv}/src"))
-            # if driver has yaml then only add it to custom_target
-            drv_hasyaml = Path(os.path.join(src_dir,f"XilinxProcessorIPLib/drivers/{drv}/data/{drv}.yaml"))
-            if os.path.isfile(drv_hasyaml):
-                drv_targets.append(drv)
-            drv1 = drv.replace("_", "-")
-            tmp_str1 = str("${RECIPE_SYSROOT}")
-            tmp_str = tmp_str1 + "/usr/lib/lib{}.a,,{},,".format(drv, drv1)
-            tmp_str = '"{}"'.format(tmp_str)
-            fd.write("\nPACKAGECONFIG[%s] = %s" % (drv1, tmp_str))
+    with open(os.path.join(sdt.outdir, 'distro.conf'), 'w') as fd:
+        fd.write(f'DISTRO_FEATURES = "{" ".join(driver_list_for_yocto)}"')
 
-    cfd.write("set(DRIVER_TARGETS %s)\n" % to_cmakelist(drv_targets))
-    cfd.write("set(DRIVER_LIST %s)\n" % to_cmakelist(driver_list))
-    drv_copy_src(proc_name, cfd, src_dir)
-    drv_cmake_target(proc_name, cfd, src_dir)
-    add_xparam_target(proc_name, cfd, src_dir)
-    cfd.write("add_library(xil INTERFACE)\n")
-    cfd.write("add_dependencies(xil ${DRIVER_TARGETS} xparam)\n")
-    cfd.close()
+    with open(os.path.join(sdt.outdir, 'ip_drv_map.yaml'), 'w') as fd:
+        yaml.dump(ip_sorted_dict, fd, default_flow_style=False, sort_keys=False)
+
+    with open(os.path.join(sdt.outdir, 'libxil.conf'), 'w') as fd:
+        fd.write(yocto_pkg_config_entries)
+
+    with open(os.path.join(sdt.outdir, 'DRVLISTConfig.cmake'), 'w') as cfd:
+        cfd.write(f'set(DRIVER_LIST {";".join(driver_list)})\n')
+
     return driver_list

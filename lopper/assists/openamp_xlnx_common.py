@@ -97,178 +97,6 @@ class SOC_TYPE:
     ZYNQMP = 1
     ZYNQ = 2
 
-general_template="""
-#ifndef OPENAMP_LOPPER_INFO_H_
-#define OPENAMP_LOPPER_INFO_H_
-
-
-#define CHANNEL_0_MEM_VDEV0VRING0_ADDR	{CHANNEL_0_VDEV0VRING0_ADDR}
-#define CHANNEL_0_MEM_VDEV0VRING0_RANGE	{CHANNEL_0_VDEV0VRING0_RANGE}
-#define CHANNEL_0_MEM_VDEV0VRING1_ADDR	{CHANNEL_0_VDEV0VRING1_ADDR}
-#define CHANNEL_0_MEM_VDEV0VRING1_RANGE	{CHANNEL_0_VDEV0VRING1_RANGE}
-#define CHANNEL_0_MEM_VDEV0BUFFER_ADDR	{CHANNEL_0_VDEV0BUFFER_ADDR}
-#define CHANNEL_0_MEM_VDEV0BUFFER_RANGE	{CHANNEL_0_VDEV0BUFFER_RANGE}
-#define CHANNEL_0_MEM_ELFLOAD_ADDR	{CHANNEL_0_ELFLOAD_ADDR}
-#define CHANNEL_0_MEM_ELFLOAD_RANGE	{CHANNEL_0_ELFLOAD_RANGE}
-#define CHANNEL_0_MEM_RANGE	        {CHANNEL_0_MEM_RANGE}
-
-#define CHANNEL_0_MEM_SHARED_MEM_PA	{CHANNEL_0_SHARED_MEM_PA}
-#define CHANNEL_0_MEM_RING_TX           {CHANNEL_0_TX}
-#define CHANNEL_0_MEM_RING_RX	        {CHANNEL_0_RX}
-#define CHANNEL_0_MEM_SHARED_MEM_SIZE	{CHANNEL_0_SHARED_MEM_SIZE}
-#define CHANNEL_0_MEM_SHARED_BUF_OFFSET	{CHANNEL_0_SHARED_BUF_OFFSET}
-#define CHANNEL_0_MEM_VRING_MEM_SIZE	{CHANNEL_0_VRING_MEM_SIZE}
-#define CHANNEL_0_MEM_RSC_MEM_SIZE	{CHANNEL_0_RSC_MEM_SIZE}
-#define CHANNEL_0_MEM_NUM_VRINGS	2
-#define CHANNEL_0_MEM_VRING_ALIGN	0x1000
-#define CHANNEL_0_MEM_VRING_SIZE	256
-#define CHANNEL_0_MEM_NUM_TABLE_ENTRIES	1
-#define REMOTE_BUS_NAME                 "generic"
-#define MASTER_BUS_NAME                 "platform"
-
-{soc_template}
-
-#endif /* OPENAMP_LOPPER_INFO_H_ */
-"""
-
-zynq_template="""
-#define DEVICE_MEMORY 0xC06     /* Device memory */
-#define STRONG_ORDERED 0xC02    /* Strongly ordered */
-#define RESERVED 0x0            /* reserved memory */
-#define NORM_NONCACHE 0x11DE2   /* Normal Non-cacheable */
-#define REMOTE_SCUGIC_DEV_NAME	"scugic_dev"
-#define SCUGIC_PERIPH_BASE	0xF8F00000
-#define SCUGIC_DIST_BASE	(SCUGIC_PERIPH_BASE + 0x00001000)
-#define ZYNQ_CPU_ID_MASK	0x1UL
-/* SGIs */
-#define SGI_TO_NOTIFY           15 /* SGI to notify the remote */
-#define SGI_NOTIFICATION        14 /* SGI from the remote */
-"""
-
-r5_template="""
-#define CHANNEL_0_MASTER_IPI_BASE_ADDR	{MASTER_IPI_BASE_ADDR}
-#define CHANNEL_0_MASTER_IPI_NAME	{MASTER_IPI_NAME}
-#define CHANNEL_0_MASTER_IRQ_VECT_ID    {MASTER_IRQ_VECT_ID}
-#define CHANNEL_0_MASTER_CHN_BITMASK    {MASTER_CHN_BITMASK}
-#define CHANNEL_0_REMOTE_IPI_BASE_ADDR  {REMOTE_IPI_BASE_ADDR}
-#define CHANNEL_0_REMOTE_IPI_NAME       {REMOTE_IPI_NAME}
-#define CHANNEL_0_REMOTE_IRQ_VECT_ID    {REMOTE_IRQ_VECT_ID}
-#define CHANNEL_0_REMOTE_CHN_BITMASK    {REMOTE_CHN_BITMASK}
-"""
-
-
-# platform determine SoC
-# is_kernel_case for SoC's that support user/kernelspace
-# inputs is dictionary with inputs for template
-def write_openamp_header(platform, is_kernel_case, inputs, options):
-    if (len(options["args"])) > 0:
-        f_name = options["args"][0]
-    else:
-        f_name = "openamp_lopper_info.h"
-    try:
-        verbose = options['verbose']
-    except:
-        verbose = 0
-
-    if not inputs:
-        print( "[WARNING]: unable to generate openamp_lopper_info.h, no valid inputs" )
-        return
-
-    f =  open(f_name,"w")
-    if platform == SOC_TYPE.ZYNQ:
-        inputs["soc_template"] = zynq_template
-    else:
-        inputs["soc_template"] = r5_template.format(**inputs)
-        
-    f.write(general_template.format(**inputs))
-    f.close()
-
-def generate_openamp_file(carveout_list, options, platform, is_kernel_case, inputs):
-    symbol_name = "CHANNEL_0_MEM_"
-    current_channel_count = 0 # if == 4 then got complete channel range
-    vring_mems = []
-    channel_range = 0
-
-    if platform == SOC_TYPE.ZYNQ:
-        addr_column = 0
-        range_column = 1
-    else:
-        addr_column = 1
-        range_column = 3
-
-    for i in carveout_list:
-
-        if "vdev0buffer" in i[0]:
-            current_channel_count += 1
-            inputs["CHANNEL_0_VDEV0BUFFER_ADDR"] = i[1][addr_column]
-            inputs["CHANNEL_0_VDEV0BUFFER_RANGE"] = i[1][range_column]
-            inputs["CHANNEL_0_SHARED_MEM_SIZE"] = i[1][range_column]
-            vdev0buffer_range = i[1][range_column]
-            channel_range += int(i[1][range_column],16)
-        elif "vdev0vring0" in i[0]:
-            current_channel_count += 1
-            inputs["CHANNEL_0_VDEV0VRING0_ADDR"] = i[1][addr_column]
-            inputs["CHANNEL_0_VDEV0VRING0_RANGE"] = i[1][range_column]
-            inputs["CHANNEL_0_SHARED_MEM_PA"] =  i[1][range_column]
-            if is_kernel_case == False:
-                inputs["CHANNEL_0_TX"] = i[1][addr_column]
-
-            channel_range += int(i[1][range_column],16)
-            vring_mems.append(i[1][range_column])
-        elif "vdev0vring1" in i[0]:
-            vring_mems.append(i[1][range_column])
-            inputs["CHANNEL_0_VDEV0VRING1_ADDR"] = i[1][addr_column]
-            inputs["CHANNEL_0_VDEV0VRING1_RANGE"] = i[1][range_column]
-            if is_kernel_case == False:
-                inputs["CHANNEL_0_RX"] = i[1][addr_column]
-
-            current_channel_count += 1
-            channel_range += int(i[1][range_column],16)
-        elif "elfload" in i[0]:
-            current_channel_count += 1
-            channel_range += int(i[1][range_column],16)
-            inputs["CHANNEL_0_ELFLOAD_ADDR"] = i[1][addr_column]
-            inputs["CHANNEL_0_ELFLOAD_RANGE"] = i[1][range_column]
-
-        if current_channel_count == 4:
-            inputs["CHANNEL_0_MEM_RANGE"] = hex(channel_range)
-            current_channel_count += 1 # TODO account for >1 channels
-            vring_mems_size_total = 0
-            for i in vring_mems:
-                vring_mems_size_total += int(i,16)
-            inputs["CHANNEL_0_SHARED_BUF_OFFSET"] = hex(vring_mems_size_total)
-            inputs["CHANNEL_0_VRING_MEM_SIZE"] = hex(vring_mems_size_total)
-
-            vring_mem_size = 0
-
-    write_openamp_header(platform, is_kernel_case, inputs, options)
-
-def parse_memory_carevouts(sdt, options, remoteproc_node):
-    try:
-        verbose = options['verbose']
-    except:
-        verbose = 0
-
-    carveout_list = [] # string representation of mem carveout nodes
-    phandle_list = []
-
-    reserved_mem_node = sdt.tree["/reserved-memory"]
-
-    for node in reserved_mem_node.subnodes():
-        if node.props("compatible") != [] and "openamp,xlnx,mem-carveout" in node["compatible"].value:
-            phandle_list.append(node.phandle)
-            carveout_list.append( ( (str(node), str(node['reg']).replace("reg = <","").replace(">;","").split(" ")) ))
-
-    # output to DT
-    if remoteproc_node != None:
-        try:
-            remoteproc_node["memory-region"].value = phandle_list
-            remoteproc_node.sync ( sdt.FDT )
-        except:
-            if verbose > 0:
-                print( "[ERROR]: cannot find the target remoteproc node ")
-
-    return carveout_list
 
 def resolve_remoteproc_carveouts( tree, subnode, verbose = 0 ):
     prop = None
@@ -351,63 +179,155 @@ def resolve_rpmsg_carveouts( tree, subnode, verbose = 0 ):
         new_prop_val.append(current_node.phandle)
 
     # update value of property to have phandles
-    prop.value = new_prop_val
+    subnode.props("carveouts")[0].value = new_prop_val
 
     return True
 
 def resolve_rpmsg_mbox( tree, subnode, verbose = 0 ):
-    mbox_node = None
-    prop = None
+    mbox_nodes = []
+    props = []
+    search_strs = []
+    new_prop_val = []
 
     if subnode.props("mbox") == []:
         print("WARNING:", "rpmsg relation does not have mbox")
         return False
 
-    prop = subnode.props("mbox")[0]
-    search_str = prop.value.strip()
+    props = subnode.props("mbox")[0].value
 
-    for n in subnode.tree["/"].subnodes():
-        if search_str == n.name or search_str == n.label:
-            mbox_node = n
-            break
+    for prop in props:
+        search_strs.append ( prop.strip() )
 
-    if mbox_node == None:
-        print("resolve_rpmsg_mbox: ", tree.lnodes(n.name, exact = False) )
+    for search_str in search_strs:
+        for n in subnode.tree["/"].subnodes():
+            if search_str == n.name or search_str == n.label:
+                mbox_nodes.append( n )
+                break
 
-    if mbox_node == None or mbox_node == []:
-        print("WARNING:", "rpmsg relation can't find mbox name: ", prop.value)
-        return False
+    for i, mbox_node in enumerate(mbox_nodes):
+        prop = props[i]
+        if mbox_node == None:
+            print("resolve_rpmsg_mbox: ", tree.lnodes(n.name, exact = False) )
+        if mbox_node == None or mbox_node == []:
+            print("WARNING:", "rpmsg relation can't find mbox name: ", prop.value)
+            return False
 
-    if mbox_node.phandle == 0:
-        mbox_node.phandle_or_create()
 
-    prop.value = mbox_node.phandle
-    if mbox_node.props("phandle") == []:
-        mbox_node + LopperProp(name="phandle", value=mbox_node.phandle)
+        if mbox_node.phandle == 0:
+            mbox_node.phandle_or_create()
+        if mbox_node.props("phandle") == []:
+            mbox_node + LopperProp(name="phandle", value=mbox_node.phandle)
+
+        new_prop_val.append( mbox_node.phandle )
+
+    subnode.props("mbox")[0].value = new_prop_val
+
     return True
 
 def resolve_host_remote( tree, subnode, verbose = 0 ):
-    prop = None
-    domain_node = None
-
-    if subnode.props("host") != [] and subnode.props("remote") != []:
+    prop_names = [ "host", "remote" ]
+            
+    if subnode.props(prop_names[0]) != [] and subnode.props(prop_names[1]) != []:
         print("WARNING:", "relation has both host and remote")
         return False
-    elif subnode.props("host") != []:
-        prop = subnode.props("host")[0]
-    else:
-        prop = subnode.props("remote")[0]
-
-
-    for n in tree["/domains"].subnodes():
-        if prop.value in n.name:
-            domain_node = n
-            break
-
-    if domain_node.phandle == 0:
-        domain_node.phandle_or_create()
-
-    prop.value = domain_node.phandle
-    if domain_node.props("phandle") == []:
-        domain_node + LopperProp(name="phandle", value=domain_node.phandle)
+    for pn in prop_names:
+        if subnode.props(pn) != [] and subnode.props(pn) != []:
+            prop_val = subnode.props(pn)[0].value
+            new_prop_val = []
+            for p in prop_val:
+                # find each host/remote matching domain node in tree
+                for n in tree["/domains"].subnodes():
+                    if p in n.name:
+                        # give matching node phandle if needed
+                        if n.phandle == 0:
+                            n.phandle_or_create()
+                        if n.props("phandle") == []:
+                            n + LopperProp(name="phandle", value=n.phandle)
+                        new_prop_val.append( n.phandle )
+            subnode.props(pn)[0].value = new_prop_val
+    
     return True
+
+platform_info_header_a9_template = """
+/*
+ * Copyright (c) 2023 AMD, Inc.
+ * All rights reserved.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#ifndef _AMD_GENERATED_H_
+#define _AMD_GENERATED_H_
+
+/* Interrupt vectors */
+#define SGI_TO_NOTIFY           $SGI_TO_NOTIFY
+#define SGI_NOTIFICATION        $SGI_NOTIFICATION
+
+#define NUM_VRINGS              0x02
+#define VRING_ALIGN             0x1000
+#define VRING_SIZE              256
+
+#define RING_TX                 $RING_TX
+#define RING_RX                 $RING_RX
+
+#define SHARED_MEM_PA           $SHARED_MEM_PA
+#define SHARED_MEM_SIZE         $SHARED_MEM_SIZE
+#define SHARED_BUF_OFFSET       $SHARED_BUF_OFFSET
+
+#define SCUGIC_DEV_NAME         $SCUGIC_DEV_NAME
+#define SCUGIC_BUS_NAME         $SCUGIC_BUS_NAME
+#define SCUGIC_PERIPH_BASE      $SCUGIC_PERIPH_BASE
+#define SCUGIC_DIST_BASE        ($SCUGIC_PERIPH_BASE + 0x00001000)
+
+/* Memory attributes */
+#define NORM_NONCACHE 0x11DE2   /* Normal Non-cacheable */
+#define STRONG_ORDERED 0xC02    /* Strongly ordered */
+#define DEVICE_MEMORY 0xC06 /* Device memory */
+#define RESERVED 0x0        /* reserved memory */
+
+/* Zynq CPU ID mask */
+#define ZYNQ_CPU_ID_MASK 0x1UL
+
+/* Another APU core ID. In this demo, the other APU core is 0. */
+#define A9_CPU_ID   0UL
+
+#endif /* _AMD_GENERATED_H_ */
+"""
+
+platform_info_header_r5_template = """
+/*
+ * Copyright (c) 2023 AMD, Inc.
+ * All rights reserved.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#ifndef _AMD_GENERATED_H_
+#define _AMD_GENERATED_H_
+
+/* Interrupt vectors */
+#define IPI_IRQ_VECT_ID         $IPI_IRQ_VECT_ID
+#define POLL_BASE_ADDR          $POLL_BASE_ADDR
+#define IPI_CHN_BITMASK         $IPI_CHN_BITMASK
+
+#define NUM_VRINGS              0x02
+#define VRING_ALIGN             0x1000
+#define VRING_SIZE              256
+
+#define RING_TX                 $RING_TX
+#define RING_RX                 $RING_RX
+
+#define SHARED_MEM_PA           $SHARED_MEM_PA
+#define SHARED_MEM_SIZE         $SHARED_MEM_SIZE
+#define SHARED_BUF_OFFSET       $SHARED_BUF_OFFSET
+
+#define SHM_DEV_NAME            $SHM_DEV_NAME
+#define DEV_BUS_NAME            $DEV_BUS_NAME
+#define IPI_DEV_NAME            $IPI_DEV_NAME
+#define RSC_MEM_SIZE            $RSC_MEM_SIZE
+#define RSC_MEM_PA              $RSC_MEM_PA
+#define SHARED_BUF_PA           $SHARED_BUF_PA
+#define SHARED_BUF_SIZE         $SHARED_BUF_SIZE
+
+#endif /* _AMD_GENERATED_H_ */
+"""

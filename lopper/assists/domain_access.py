@@ -31,6 +31,8 @@ from itertools import chain
 def is_compat( node, compat_string_to_test ):
     if re.search( "access-domain,domain-v1", compat_string_to_test):
         return core_domain_access
+    if re.search( "module,domain_access", compat_string_to_test):
+        return core_domain_access
     return ""
 
 # tests for a bit that is set, going fro 31 -> 0 from MSB to LSB
@@ -117,6 +119,19 @@ def core_domain_access( tgt_node, sdt, options ):
         verbose = options['verbose']
     except:
         verbose = 0
+
+    if tgt_node.abs_path == "/":
+        if sdt.target_domain:
+            try:
+                tgt_node = sdt.tree[sdt.target_domain]
+            except Exception as e:
+                print( "[ERROR]: target domain %s cannot be found" % sdt.target_domain )
+                sys.exit(1)
+        else:
+            try:
+                tgt_node = sdt.tree["/domains/default"]
+            except:
+                pass
 
     # reset the treewide ref counting
     sdt.tree.ref = 0

@@ -38,6 +38,8 @@ import sys
 from io import StringIO
 import sys
 
+import lopper.log
+
 class Capturing(list):
     def __enter__(self):
         self._stdout = sys.stdout
@@ -1200,13 +1202,13 @@ def tree_sanity_test( fdt, verbose=0 ):
     walker = LopperTree()
     walker.load( Lopper.export( fdt ) )
 
-    fpp = tempfile.NamedTemporaryFile( delete=True )
+    fpp = tempfile.NamedTemporaryFile( delete=False )
     fpw = open( fpp.name, 'w+')
     for n in walker:
         try:
             print( "\nnode: %s:%s [%s] parent: %s children: %s depth: %s" % (n.name, n.number,
                                                                              hex(n.phandle), n.parent,
-                                                                             n.child_nodes, n.depth), file=fpw)
+                                                                             n.child_nodes, n.depth), file=fpw )
             for prop in n:
                 print( "    property: %s %s" % (prop.name, prop.value), file=fpw)
                 print( "    raw: %s" % (n[prop.name]), file=fpw )
@@ -1229,6 +1231,8 @@ def tree_sanity_test( fdt, verbose=0 ):
         test_passed( "end: node walk passed\n" )
 
     fpw.close()
+    fpp.close()
+    os.remove( fpp.name )
 
     # test2: tree print
     print( "[TEST]: start: tree print" )
@@ -1239,7 +1243,7 @@ def tree_sanity_test( fdt, verbose=0 ):
     dct = Lopper.export( fdt )
     memres_tree.load( dct )
 
-    fpp = tempfile.NamedTemporaryFile( delete=True )
+    fpp = tempfile.NamedTemporaryFile( delete=False )
     fpw = open( fpp.name, 'w+')
     memres_tree.print( fpw )
 
@@ -1263,7 +1267,7 @@ def tree_sanity_test( fdt, verbose=0 ):
         test_passed( "/memreserve/ was maintained through processing" )
     fpw.close()
 
-    fpp = tempfile.NamedTemporaryFile( delete=True )
+    fpp = tempfile.NamedTemporaryFile( delete=False )
 
     printer = LopperTreePrinter( True, fpp.name )
     printer.load( Lopper.export( fdt ) )
@@ -1280,6 +1284,8 @@ def tree_sanity_test( fdt, verbose=0 ):
     else:
         test_passed( "end: tree print passed\n")
     fpw.close()
+    fpp.close()
+    os.remove(fpp.name)
 
     # test3: node manipulations/access
     print( "[TEST]: start: node manipulations" )
@@ -1362,7 +1368,8 @@ def tree_sanity_test( fdt, verbose=0 ):
 
     print( "[SUB TEST]: end full node walk after custom node list\n" )
 
-    os.unlink( fpw.name )
+    fpp.close()
+    os.remove(fpp.name)
 
 
     print( "[SUB TEST]: subtree walk" )
@@ -1846,7 +1853,7 @@ def tree_sanity_test( fdt, verbose=0 ):
 
     print( "[TEST]: start, new tree test" )
 
-    fpp = tempfile.NamedTemporaryFile( delete=True )
+    fpp = tempfile.NamedTemporaryFile( delete=False )
 
     new_tree = LopperTreePrinter( False, fpp.name )
     # make a copy of our existing node
@@ -2150,7 +2157,7 @@ def lops_sanity_test( device_tree, lop_file, verbose ):
 
 def assists_sanity_test( device_tree, lop_file, verbose ):
     device_tree.setup( dt, [lop_file], "", True, libfdt = libfdt )
-    device_tree.assists_setup( [ "lopper/assists/domain-access.py" ] )
+    device_tree.assists_setup( [ "lopper/assists/domain_access.py" ] )
 
     print( "[TEST]: running assist against tree" )
     device_tree.perform_lops()
@@ -2409,6 +2416,8 @@ if __name__ == "__main__":
         lopper.lopper_type(lopper.dt.LopperDT)
 
     Lopper = lopper.Lopper
+
+    lopper.log.init( verbose )
 
     if tree:
         dt = setup_device_tree( outdir )

@@ -13,9 +13,10 @@ import os
 import glob
 
 sys.path.append(os.path.dirname(__file__))
+
 from baremetalconfig_xlnx import compat_list, get_cpu_node
 from baremetallinker_xlnx import get_memranges
-from bmcmake_metadata_xlnx import to_cmakelist
+from common_utils import to_cmakelist
 
 def is_compat( node, compat_string_to_test ):
     if "module,baremetal_bspconfig_xlnx" in compat_string_to_test:
@@ -28,6 +29,8 @@ def is_compat( node, compat_string_to_test ):
 def xlnx_generate_bm_bspconfig(tgt_node, sdt, options):
     root_node = sdt.tree[tgt_node]
     root_sub_nodes = root_node.subnodes()
+    if options.get('outdir', {}):
+        sdt.outdir = options['outdir']
    
     mem_ranges = get_memranges(tgt_node, sdt, options)
     if not mem_ranges:
@@ -39,6 +42,13 @@ def xlnx_generate_bm_bspconfig(tgt_node, sdt, options):
         mem_size_list = []
         for key, value in sorted(mem_ranges.items(), key=lambda e: e[1][1], reverse=True):
             start,size = value[0], value[1]
+            """
+            PS7 DDR initial 1MB is reserved memory
+            Adjust the size and start address accordingly.
+            """
+            if "ps7_ddr" in key:
+                start = 1048576
+                size -= start
             name = f"XPAR_{key.upper()}_BASEADDRESS"
             mem_name_list.append(name)
             name = f"XPAR_{key.upper()}_HIGHADDRESS"

@@ -15,13 +15,19 @@
                 // compatible = "system-device-tree-v1,lop";
                 lop_1 {
                         // modify to "nothing", is a remove operation
-                        compatible = "system-device-tree-v1,lop,modify";
-                        modify = "/cpus-r5@1::";
+                        compatible = "system-device-tree-v1,lop,select-v1";
+                        select_1;
+                        select_2 = "/.*:compatible:.*arm,cortex-r5.*";
+                        select_3 = "/.*:compatible:.*pmu-microblaze.*";
                 };
                 lop_2 {
-                        // modify to "nothing", is a remove operation
-                        compatible = "system-device-tree-v1,lop,modify";
-                        modify = "/cpus_microblaze@1::";
+                        compatible = "system-device-tree-v1,lop,code-v1";
+                        code = "
+                            # Check for domain node
+                            for s in tree.__selected__:
+                                tree.delete(s.parent)
+                                tree.delete(s)
+                        ";
                 };
                 lop_3 {
                         // modify to "nothing", is a remove operation
@@ -49,15 +55,17 @@
                       compatible = "system-device-tree-v1,lop,code-v1";
                       code = "
                           # Check for domain node
+                          from domain_access import update_mem_node
+                          from baremetalconfig_xlnx import get_label
                           domain_node = []
                           for n in __selected__:
                               if re.search('domains', n.name):
                                   domain_node = n
                           # Peipheral node handling
                           invalid_phandles = []
+                          valid_phandles = []
                           if domain_node:
                               shared_dev = []
-                              valid_phandles = []
                               for n in domain_node.subnodes():
                                   if n.propval('access') != [''] and n.propval('os,type') == ['']:
                                       shared_dev.append(n)
@@ -121,12 +129,69 @@
                                   pass
                               if node1.props('compatible') != [] and 'xlnx,zynqmp-ipi-mailbox' in node1.props('compatible')[0].value:
                                   invalid_nodes.append(node1)
+                              if node1.props('xlnx,ip-name') and 'sd_fec' in node1.props('xlnx,ip-name')[0].value:
+                                  sd_fec_valid_prop_vals = [
+                                      'clock-names', 'clocks', 'compatible', 'interrupt-names', 'interrupt-parent', 'interrupts',
+                                      'reg', 'xlnx,sdfec-code', 'xlnx,sdfec-din-width', 'xlnx,sdfec-din-words', 'xlnx,sdfec-dout-width',
+                                      'xlnx,sdfec-dout-words', 'xlnx,ip-name', 'xlnx,name', 'status', 'phandle'
+                                  ]
+                                  node_prop_list = list(node1.__props__.keys())
+                                  for prop in node_prop_list:
+                                      if prop not in sd_fec_valid_prop_vals:
+                                          node1.delete(prop)
+                              if node1.props('xlnx,ip-name') and 'usp_rf_data_converter' in node1.props('xlnx,ip-name')[0].value:
+                                  usp_rfdc_valid_prop_vals = [
+                                      'clock-names', 'clocks', 'compatible', 'num-insts', 'param-list', 'reg', 'xlnx,ip-name',
+                                      'xlnx,name', 'status', 'phandle'
+                                  ]
+                                  node_prop_list = list(node1.__props__.keys())
+                                  for prop in node_prop_list:
+                                      if prop not in usp_rfdc_valid_prop_vals:
+                                          node1.delete(prop)
                               ignore_node = [node1 for ipname in ignore_list if re.search(ipname, node1.name)]
                               if ignore_node:
                                   invalid_nodes.append(ignore_node[0])
 
                           for node1 in invalid_nodes:
                               tree.delete(node1)
+
+                          # Update memory nodes as per address-map cluster mapping
+                          memnode_list = tree.nodes('/memory@.*')
+                          for node1 in memnode_list:
+                              # Check whether the memory node is mapped to cpu cluster or not
+                              mem_phandles = [handle for handle in phandles if handle == node1.phandle]
+                              prop_val = []
+                              if mem_phandles:
+                                  mem_phandles = list(dict.fromkeys(mem_phandles))
+                                  indx_list = [index for index,handle in enumerate(address_map) for val in mem_phandles if handle == val]
+                                  for inx in indx_list:
+                                      start = [address_map[inx+i+1] for i in range(na)]
+                                      # start addresss is non zero means 40-bit address update it accordingly
+                                      if na == 2 and start[0] != 0:
+                                          val = str(start[1])
+                                          pad = 8 - len(val)
+                                          val = val.ljust(pad + len(val), '0')
+                                          reg = int((str(hex(start[0])) + val), base=16)
+                                          prop_val.append(reg)
+                                      elif na == 2:
+                                          prop_val.append(start[1])
+                                      else:
+                                          prop_val.append(start[0])
+                                      prop_val.append(address_map[inx+2*na])
+                              modify_val = update_mem_node(node1, prop_val)
+                              node1['reg'].value = modify_val
+
+                              # Update symbol node referneces
+                              symbol_node = tree['/__symbols__']
+                              prop_list = list(symbol_node.__props__.keys())
+                              match_label_list = []
+                              for n in tree['/'].subnodes():
+                                  matched_label = get_label(tree, symbol_node, n)
+                                  if matched_label:
+                                      match_label_list.append(matched_label)
+                              for prop in prop_list:
+                                  if prop not in match_label_list:
+                                      tree['/__symbols__'].delete(prop)
                       ";
                 };
         };
